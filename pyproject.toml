@@ -1,0 +1,8 @@
+[project]
+name = "modbus-server"
+version = "0.1.0"
+description = "Add your description here"
+requires-python = ">=3.11"
+dependencies = [
+    "pymodbus==3.9.2",
+]
