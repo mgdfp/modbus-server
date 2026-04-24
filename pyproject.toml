@@ -4,5 +4,7 @@ version = "0.1.0"
 description = "Add your description here"
 requires-python = ">=3.11"
 dependencies = [
+    "aiohttp>=3.13.5",
     "pymodbus==3.9.2",
+    "python-dotenv>=1.2.2",
 ]
