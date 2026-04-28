@@ -6,6 +6,7 @@ import os
 from datetime import date, datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import aiohttp
 from dotenv import load_dotenv
@@ -28,6 +29,7 @@ YR_LAT = os.environ["YR_LAT"]
 YR_LON = os.environ["YR_LON"]
 YR_URL = f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={YR_LAT}&lon={YR_LON}"
 YR_HEADERS = {"User-Agent": "home-modbus-bridge/1.0"}
+DISPLAY_TZ = ZoneInfo("Europe/Oslo")
 
 # ---------------------------------------------------------------------------
 # Holding register indices (1-based)
@@ -250,8 +252,8 @@ def _process_yr(data: dict):
         dt = datetime.fromisoformat(entry["time"].replace("Z", "+00:00"))
         ts_map[dt.replace(minute=0, second=0, microsecond=0)] = entry
 
-    local_tz = datetime.now().astimezone().tzinfo
-    now_local = datetime.now(local_tz)
+    local_tz  = DISPLAY_TZ
+    now_local = datetime.now(DISPLAY_TZ)
     now_utc   = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
     # Current conditions
@@ -288,6 +290,15 @@ def _process_yr(data: dict):
             utc_dt   = local_dt.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
             entry = ts_map.get(utc_dt)
+            if entry is None and utc_dt < now_utc:
+                # Slot start is in the past; find nearest available entry in this 6h window
+                utc_slot_end = utc_dt + timedelta(hours=6)
+                candidate = now_utc
+                while candidate < utc_slot_end:
+                    if candidate in ts_map:
+                        entry = ts_map[candidate]
+                        break
+                    candidate += timedelta(hours=1)
             if entry is None:
                 continue
 
@@ -321,6 +332,13 @@ def _process_yr(data: dict):
         if winds:
             set_hr(wind_r, max(winds))
 
+    for day_i2, slot_regs2 in enumerate(_SLOT_REGS):
+        parts = []
+        for slot_i2, (sc_r2, st_r2, sw_r2) in enumerate(slot_regs2):
+            code2 = _hr_block.getValues(sc_r2, 1)[0]
+            temp2 = _hr_block.getValues(st_r2, 1)[0] / 10.0
+            parts.append(f"S{slot_i2}={code2}/{temp2:.1f}°")
+        log.info(f"[YR] D{day_i2+1}: {' '.join(parts)}")
     log.info(f"[YR] updated forecast for {today_local}")
 
 

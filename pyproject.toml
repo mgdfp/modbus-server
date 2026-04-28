@@ -7,4 +7,5 @@ dependencies = [
     "aiohttp>=3.13.5",
     "pymodbus==3.9.2",
     "python-dotenv>=1.2.2",
+    "tzdata>=2024.1",
 ]
