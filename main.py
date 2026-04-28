@@ -54,32 +54,32 @@ HR_ROOM6_TEMP      = 16
 HR_FC_DAY1_CODE    = 17
 HR_FC_DAY1_HIGH    = 18
 HR_FC_DAY1_LOW     = 19
-HR_FC_DAY1_WIND    = 20
+HR_FC_DAY1_PRECIP  = 20
 HR_FC_DAY1_WEEKDAY = 21
 HR_FC_DAY2_CODE    = 22
 HR_FC_DAY2_HIGH    = 23
 HR_FC_DAY2_LOW     = 24
-HR_FC_DAY2_WIND    = 25
+HR_FC_DAY2_PRECIP  = 25
 HR_FC_DAY2_WEEKDAY = 26
 HR_FC_DAY3_CODE    = 27
 HR_FC_DAY3_HIGH    = 28
 HR_FC_DAY3_LOW     = 29
-HR_FC_DAY3_WIND    = 30
+HR_FC_DAY3_PRECIP  = 30
 HR_FC_DAY3_WEEKDAY = 31
 # 6-hour slot forecast (HR 32-67): 3 days × 4 slots × 3 values
 # Slots: S0=00-06, S1=06-12, S2=12-18, S3=18-24  (local time)
-HR_FC_D1_S0_CODE = 32;  HR_FC_D1_S0_TEMP = 33;  HR_FC_D1_S0_WIND = 34
-HR_FC_D1_S1_CODE = 35;  HR_FC_D1_S1_TEMP = 36;  HR_FC_D1_S1_WIND = 37
-HR_FC_D1_S2_CODE = 38;  HR_FC_D1_S2_TEMP = 39;  HR_FC_D1_S2_WIND = 40
-HR_FC_D1_S3_CODE = 41;  HR_FC_D1_S3_TEMP = 42;  HR_FC_D1_S3_WIND = 43
-HR_FC_D2_S0_CODE = 44;  HR_FC_D2_S0_TEMP = 45;  HR_FC_D2_S0_WIND = 46
-HR_FC_D2_S1_CODE = 47;  HR_FC_D2_S1_TEMP = 48;  HR_FC_D2_S1_WIND = 49
-HR_FC_D2_S2_CODE = 50;  HR_FC_D2_S2_TEMP = 51;  HR_FC_D2_S2_WIND = 52
-HR_FC_D2_S3_CODE = 53;  HR_FC_D2_S3_TEMP = 54;  HR_FC_D2_S3_WIND = 55
-HR_FC_D3_S0_CODE = 56;  HR_FC_D3_S0_TEMP = 57;  HR_FC_D3_S0_WIND = 58
-HR_FC_D3_S1_CODE = 59;  HR_FC_D3_S1_TEMP = 60;  HR_FC_D3_S1_WIND = 61
-HR_FC_D3_S2_CODE = 62;  HR_FC_D3_S2_TEMP = 63;  HR_FC_D3_S2_WIND = 64
-HR_FC_D3_S3_CODE = 65;  HR_FC_D3_S3_TEMP = 66;  HR_FC_D3_S3_WIND = 67
+HR_FC_D1_S0_CODE = 32;  HR_FC_D1_S0_TEMP = 33;  HR_FC_D1_S0_PRECIP = 34
+HR_FC_D1_S1_CODE = 35;  HR_FC_D1_S1_TEMP = 36;  HR_FC_D1_S1_PRECIP = 37
+HR_FC_D1_S2_CODE = 38;  HR_FC_D1_S2_TEMP = 39;  HR_FC_D1_S2_PRECIP = 40
+HR_FC_D1_S3_CODE = 41;  HR_FC_D1_S3_TEMP = 42;  HR_FC_D1_S3_PRECIP = 43
+HR_FC_D2_S0_CODE = 44;  HR_FC_D2_S0_TEMP = 45;  HR_FC_D2_S0_PRECIP = 46
+HR_FC_D2_S1_CODE = 47;  HR_FC_D2_S1_TEMP = 48;  HR_FC_D2_S1_PRECIP = 49
+HR_FC_D2_S2_CODE = 50;  HR_FC_D2_S2_TEMP = 51;  HR_FC_D2_S2_PRECIP = 52
+HR_FC_D2_S3_CODE = 53;  HR_FC_D2_S3_TEMP = 54;  HR_FC_D2_S3_PRECIP = 55
+HR_FC_D3_S0_CODE = 56;  HR_FC_D3_S0_TEMP = 57;  HR_FC_D3_S0_PRECIP = 58
+HR_FC_D3_S1_CODE = 59;  HR_FC_D3_S1_TEMP = 60;  HR_FC_D3_S1_PRECIP = 61
+HR_FC_D3_S2_CODE = 62;  HR_FC_D3_S2_TEMP = 63;  HR_FC_D3_S2_PRECIP = 64
+HR_FC_D3_S3_CODE = 65;  HR_FC_D3_S3_TEMP = 66;  HR_FC_D3_S3_PRECIP = 67
 # Past-slot flags for today's column dimming (HR 68-70)
 HR_SLOT0_PAST    = 68   # 1 when hour >= 6
 HR_SLOT1_PAST    = 69   # 1 when hour >= 12
@@ -158,29 +158,29 @@ YR_SYMBOL_MAP = {
 # Slot and daily register tables indexed by day (0-2) and slot (0-3)
 _SLOT_REGS = [
     [
-        (HR_FC_D1_S0_CODE, HR_FC_D1_S0_TEMP, HR_FC_D1_S0_WIND),
-        (HR_FC_D1_S1_CODE, HR_FC_D1_S1_TEMP, HR_FC_D1_S1_WIND),
-        (HR_FC_D1_S2_CODE, HR_FC_D1_S2_TEMP, HR_FC_D1_S2_WIND),
-        (HR_FC_D1_S3_CODE, HR_FC_D1_S3_TEMP, HR_FC_D1_S3_WIND),
+        (HR_FC_D1_S0_CODE, HR_FC_D1_S0_TEMP, HR_FC_D1_S0_PRECIP),
+        (HR_FC_D1_S1_CODE, HR_FC_D1_S1_TEMP, HR_FC_D1_S1_PRECIP),
+        (HR_FC_D1_S2_CODE, HR_FC_D1_S2_TEMP, HR_FC_D1_S2_PRECIP),
+        (HR_FC_D1_S3_CODE, HR_FC_D1_S3_TEMP, HR_FC_D1_S3_PRECIP),
     ],
     [
-        (HR_FC_D2_S0_CODE, HR_FC_D2_S0_TEMP, HR_FC_D2_S0_WIND),
-        (HR_FC_D2_S1_CODE, HR_FC_D2_S1_TEMP, HR_FC_D2_S1_WIND),
-        (HR_FC_D2_S2_CODE, HR_FC_D2_S2_TEMP, HR_FC_D2_S2_WIND),
-        (HR_FC_D2_S3_CODE, HR_FC_D2_S3_TEMP, HR_FC_D2_S3_WIND),
+        (HR_FC_D2_S0_CODE, HR_FC_D2_S0_TEMP, HR_FC_D2_S0_PRECIP),
+        (HR_FC_D2_S1_CODE, HR_FC_D2_S1_TEMP, HR_FC_D2_S1_PRECIP),
+        (HR_FC_D2_S2_CODE, HR_FC_D2_S2_TEMP, HR_FC_D2_S2_PRECIP),
+        (HR_FC_D2_S3_CODE, HR_FC_D2_S3_TEMP, HR_FC_D2_S3_PRECIP),
     ],
     [
-        (HR_FC_D3_S0_CODE, HR_FC_D3_S0_TEMP, HR_FC_D3_S0_WIND),
-        (HR_FC_D3_S1_CODE, HR_FC_D3_S1_TEMP, HR_FC_D3_S1_WIND),
-        (HR_FC_D3_S2_CODE, HR_FC_D3_S2_TEMP, HR_FC_D3_S2_WIND),
-        (HR_FC_D3_S3_CODE, HR_FC_D3_S3_TEMP, HR_FC_D3_S3_WIND),
+        (HR_FC_D3_S0_CODE, HR_FC_D3_S0_TEMP, HR_FC_D3_S0_PRECIP),
+        (HR_FC_D3_S1_CODE, HR_FC_D3_S1_TEMP, HR_FC_D3_S1_PRECIP),
+        (HR_FC_D3_S2_CODE, HR_FC_D3_S2_TEMP, HR_FC_D3_S2_PRECIP),
+        (HR_FC_D3_S3_CODE, HR_FC_D3_S3_TEMP, HR_FC_D3_S3_PRECIP),
     ],
 ]
 
 _DAILY_REGS = [
-    (HR_FC_DAY1_CODE, HR_FC_DAY1_HIGH, HR_FC_DAY1_LOW, HR_FC_DAY1_WIND, HR_FC_DAY1_WEEKDAY),
-    (HR_FC_DAY2_CODE, HR_FC_DAY2_HIGH, HR_FC_DAY2_LOW, HR_FC_DAY2_WIND, HR_FC_DAY2_WEEKDAY),
-    (HR_FC_DAY3_CODE, HR_FC_DAY3_HIGH, HR_FC_DAY3_LOW, HR_FC_DAY3_WIND, HR_FC_DAY3_WEEKDAY),
+    (HR_FC_DAY1_CODE, HR_FC_DAY1_HIGH, HR_FC_DAY1_LOW, HR_FC_DAY1_PRECIP, HR_FC_DAY1_WEEKDAY),
+    (HR_FC_DAY2_CODE, HR_FC_DAY2_HIGH, HR_FC_DAY2_LOW, HR_FC_DAY2_PRECIP, HR_FC_DAY2_WEEKDAY),
+    (HR_FC_DAY3_CODE, HR_FC_DAY3_HIGH, HR_FC_DAY3_LOW, HR_FC_DAY3_PRECIP, HR_FC_DAY3_WEEKDAY),
 ]
 
 _SLOT_HOURS = [0, 6, 12, 18]
@@ -284,16 +284,16 @@ def _process_yr(data: dict):
 
     for day_i, (slot_regs, daily_regs) in enumerate(zip(_SLOT_REGS, _DAILY_REGS)):
         day_date  = today_local + timedelta(days=day_i)
-        code_r, high_r, low_r, wind_r, wd_r = daily_regs
+        code_r, high_r, low_r, precip_r, wd_r = daily_regs
 
         set_hr_int(wd_r, date(day_date.year, day_date.month, day_date.day).isoweekday())
 
         temps: list[float] = []
-        winds: list[float] = []
+        precip_total = 0.0
         noon_code  = 0
         first_code = 0
 
-        for slot_i, (sc_r, st_r, sw_r) in enumerate(slot_regs):
+        for slot_i, (sc_r, st_r, sp_r) in enumerate(slot_regs):
             hour     = _SLOT_HOURS[slot_i]
             local_dt = datetime(day_date.year, day_date.month, day_date.day,
                                 hour, tzinfo=local_tz)
@@ -301,7 +301,6 @@ def _process_yr(data: dict):
 
             entry = ts_map.get(utc_dt)
             if entry is None and utc_dt < now_utc:
-                # Slot start is in the past; find nearest available entry in this 6h window
                 utc_slot_end = utc_dt + timedelta(hours=6)
                 candidate = now_utc
                 while candidate < utc_slot_end:
@@ -320,14 +319,15 @@ def _process_yr(data: dict):
 
             set_hr_int(sc_r, code)
             temp = d.get("air_temperature")
-            wind = d.get("wind_speed")
             set_hr(st_r, temp)
-            set_hr(sw_r, wind)
+
+            precip = (n6.get("details") or n1.get("details") or {}).get("precipitation_amount")
+            set_hr(sp_r, precip)
 
             if temp is not None:
                 temps.append(float(temp))
-            if wind is not None:
-                winds.append(float(wind))
+            if precip is not None:
+                precip_total += float(precip)
             if code and not first_code:
                 first_code = code
             if hour == 12 and code:
@@ -339,16 +339,16 @@ def _process_yr(data: dict):
         if temps:
             set_hr(high_r, max(temps))
             set_hr(low_r,  min(temps))
-        if winds:
-            set_hr(wind_r, max(winds))
+        set_hr(precip_r, precip_total)
 
     for day_i2, slot_regs2 in enumerate(_SLOT_REGS):
         parts = []
-        for slot_i2, (sc_r2, st_r2, sw_r2) in enumerate(slot_regs2):
+        for slot_i2, (sc_r2, st_r2, sp_r2) in enumerate(slot_regs2):
             code2 = _hr_block.getValues(sc_r2, 1)[0]
             temp2 = _hr_block.getValues(st_r2, 1)[0] / 10.0
+            prcp2 = _hr_block.getValues(sp_r2, 1)[0] / 10.0
             name2 = _CODE_NAMES.get(code2, str(code2))
-            parts.append(f"S{slot_i2}={name2}/{temp2:.1f}°C")
+            parts.append(f"S{slot_i2}={name2}/{temp2:.1f}°C/{prcp2:.1f}mm")
         log.info(f"[YR] D{day_i2+1}: {' '.join(parts)}")
     log.info(f"[YR] updated forecast for {today_local}")
 
