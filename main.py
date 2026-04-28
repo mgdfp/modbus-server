@@ -103,8 +103,14 @@ SCRIPT_COILS = {
     COIL_COMING_HOME:    "script.coming_home",
 }
 
-# yr.no symbol code → display code  (0 = unknown/no icon)
+# yr.no symbol code → display code (1-based: 1 = first image in MultiStateImageWgt)
 # Suffix _day / _night / _polartwilight is stripped before lookup
+# Code 2 is reserved for clearsky at night (weather_clearnight.svg)
+_CODE_NAMES = {
+    0: "?", 1: "clearday", 2: "clearnight", 3: "pcloudy", 4: "cloudy",
+    5: "fog", 6: "rain", 7: "heavyrain", 8: "snow", 9: "sleet",
+    11: "thunder", 12: "tstorm",
+}
 YR_SYMBOL_MAP = {
     "clearsky":                        1,
     "fair":                            1,
@@ -237,11 +243,15 @@ def reset_coil(index: int):
 # yr.no forecast
 # ---------------------------------------------------------------------------
 def _yr_code(symbol: str) -> int:
+    is_night = symbol.endswith("_night") or symbol.endswith("_polartwilight")
     for suffix in ("_day", "_night", "_polartwilight"):
         if symbol.endswith(suffix):
             symbol = symbol[: -len(suffix)]
             break
-    return YR_SYMBOL_MAP.get(symbol, 0)
+    code = YR_SYMBOL_MAP.get(symbol, 0)
+    if is_night and code == 1:
+        return 2  # clearsky/fair at night → weather_clearnight (moon)
+    return code
 
 
 def _process_yr(data: dict):
@@ -337,7 +347,8 @@ def _process_yr(data: dict):
         for slot_i2, (sc_r2, st_r2, sw_r2) in enumerate(slot_regs2):
             code2 = _hr_block.getValues(sc_r2, 1)[0]
             temp2 = _hr_block.getValues(st_r2, 1)[0] / 10.0
-            parts.append(f"S{slot_i2}={code2}/{temp2:.1f}°")
+            name2 = _CODE_NAMES.get(code2, str(code2))
+            parts.append(f"S{slot_i2}={name2}/{temp2:.1f}°C")
         log.info(f"[YR] D{day_i2+1}: {' '.join(parts)}")
     log.info(f"[YR] updated forecast for {today_local}")
 
