@@ -3,7 +3,7 @@ import asyncio
 import json
 import logging
 import os
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
@@ -24,25 +24,31 @@ HA_URL = os.environ["HA_URL"].rstrip("/")
 HA_TOKEN = os.environ["HA_TOKEN"]
 HA_HEADERS = {"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "application/json"}
 
+YR_LAT = os.environ["YR_LAT"]
+YR_LON = os.environ["YR_LON"]
+YR_URL = f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={YR_LAT}&lon={YR_LON}"
+YR_HEADERS = {"User-Agent": "home-modbus-bridge/1.0"}
+
 # ---------------------------------------------------------------------------
-# Holding register indices (1-based, as pymodbus uses 1-based addressing)
+# Holding register indices (1-based)
 # ---------------------------------------------------------------------------
-HR_OUTSIDE_TEMP   = 1
-HR_BATHROOM_TEMP  = 2
-HR_BEDROOM_TEMP   = 3
+HR_OUTSIDE_TEMP    = 1
+HR_BATHROOM_TEMP   = 2
+HR_BEDROOM_TEMP    = 3
 HR_LIVINGROOM_TEMP = 4
 HR_GLASSHOUSE_TEMP = 5
-HR_HOUR           = 6
-HR_MINUTE         = 7
-HR_DAY            = 8
-HR_MONTH          = 9
-HR_YEAR           = 10
+HR_HOUR            = 6
+HR_MINUTE          = 7
+HR_DAY             = 8
+HR_MONTH           = 9
+HR_YEAR            = 10
 HR_WEEKDAY         = 11  # 1=Mon, 7=Sun
 HR_WEATHER_CODE    = 12
 HR_WIND_SPEED      = 13
-HR_HUMIDITY         = 14
+HR_HUMIDITY        = 14
 HR_ROOM5_TEMP      = 15
 HR_ROOM6_TEMP      = 16
+# Daily summary (HR 17-31) — kept for backward compat with current page1 display
 HR_FC_DAY1_CODE    = 17
 HR_FC_DAY1_HIGH    = 18
 HR_FC_DAY1_LOW     = 19
@@ -58,37 +64,31 @@ HR_FC_DAY3_HIGH    = 28
 HR_FC_DAY3_LOW     = 29
 HR_FC_DAY3_WIND    = 30
 HR_FC_DAY3_WEEKDAY = 31
+# 6-hour slot forecast (HR 32-67): 3 days × 4 slots × 3 values
+# Slots: S0=00-06, S1=06-12, S2=12-18, S3=18-24  (local time)
+HR_FC_D1_S0_CODE = 32;  HR_FC_D1_S0_TEMP = 33;  HR_FC_D1_S0_WIND = 34
+HR_FC_D1_S1_CODE = 35;  HR_FC_D1_S1_TEMP = 36;  HR_FC_D1_S1_WIND = 37
+HR_FC_D1_S2_CODE = 38;  HR_FC_D1_S2_TEMP = 39;  HR_FC_D1_S2_WIND = 40
+HR_FC_D1_S3_CODE = 41;  HR_FC_D1_S3_TEMP = 42;  HR_FC_D1_S3_WIND = 43
+HR_FC_D2_S0_CODE = 44;  HR_FC_D2_S0_TEMP = 45;  HR_FC_D2_S0_WIND = 46
+HR_FC_D2_S1_CODE = 47;  HR_FC_D2_S1_TEMP = 48;  HR_FC_D2_S1_WIND = 49
+HR_FC_D2_S2_CODE = 50;  HR_FC_D2_S2_TEMP = 51;  HR_FC_D2_S2_WIND = 52
+HR_FC_D2_S3_CODE = 53;  HR_FC_D2_S3_TEMP = 54;  HR_FC_D2_S3_WIND = 55
+HR_FC_D3_S0_CODE = 56;  HR_FC_D3_S0_TEMP = 57;  HR_FC_D3_S0_WIND = 58
+HR_FC_D3_S1_CODE = 59;  HR_FC_D3_S1_TEMP = 60;  HR_FC_D3_S1_WIND = 61
+HR_FC_D3_S2_CODE = 62;  HR_FC_D3_S2_TEMP = 63;  HR_FC_D3_S2_WIND = 64
+HR_FC_D3_S3_CODE = 65;  HR_FC_D3_S3_TEMP = 66;  HR_FC_D3_S3_WIND = 67
 
 # Coil indices (1-based)
 COIL_ALL_LIGHTS_OFF = 1
 COIL_COMING_HOME    = 2
 
-WEATHER_ENTITY = "weather.forecast_home"
-
-WEATHER_CODES = {
-    "sunny": 1,
-    "clear-night": 2,
-    "partlycloudy": 3,
-    "cloudy": 4,
-    "fog": 5,
-    "rainy": 6,
-    "pouring": 7,
-    "snowy": 8,
-    "snowy-rainy": 9,
-    "hail": 10,
-    "lightning": 11,
-    "lightning-rainy": 12,
-    "windy": 13,
-    "windy-variant": 14,
-    "exceptional": 15,
-}
-
-# HA entities that map to holding registers (temperature sensors)
+# HA entities that map to holding registers (indoor temperature sensors only)
 SENSOR_ENTITIES = {
-    "sensor.bathroom_thermostat_air_temperature": HR_BATHROOM_TEMP,
-    "sensor.bedroom_thermostat_air_temperature":  HR_BEDROOM_TEMP,
+    "sensor.bathroom_thermostat_air_temperature":    HR_BATHROOM_TEMP,
+    "sensor.bedroom_thermostat_air_temperature":     HR_BEDROOM_TEMP,
     "sensor.living_room_thermostat_air_temperature": HR_LIVINGROOM_TEMP,
-    "sensor.glasshouse_temperature_temperature":  HR_GLASSHOUSE_TEMP,
+    "sensor.glasshouse_temperature_temperature":     HR_GLASSHOUSE_TEMP,
 }
 
 # HA scripts that map to coils
@@ -96,6 +96,82 @@ SCRIPT_COILS = {
     COIL_ALL_LIGHTS_OFF: "script.all_lights_off",
     COIL_COMING_HOME:    "script.coming_home",
 }
+
+# yr.no symbol code → display code  (0 = unknown/no icon)
+# Suffix _day / _night / _polartwilight is stripped before lookup
+YR_SYMBOL_MAP = {
+    "clearsky":                        1,
+    "fair":                            1,
+    "partlycloudy":                    3,
+    "cloudy":                          4,
+    "fog":                             5,
+    "lightrain":                       6,
+    "lightrainshowers":                6,
+    "rain":                            6,
+    "rainshowers":                     6,
+    "heavyrain":                       7,
+    "heavyrainshowers":                7,
+    "lightsleet":                      9,
+    "lightsleetshowers":               9,
+    "sleet":                           9,
+    "sleetshowers":                    9,
+    "heavysleet":                      9,
+    "heavysleetshowers":               9,
+    "lightsnow":                       8,
+    "lightsnowshowers":                8,
+    "snow":                            8,
+    "snowshowers":                     8,
+    "heavysnow":                       8,
+    "heavysnowshowers":                8,
+    "lightrainandthunder":             12,
+    "lightrainshowersandthunder":      12,
+    "rainandthunder":                  12,
+    "rainshowersandthunder":           12,
+    "heavyrainandthunder":             12,
+    "heavyrainshowersandthunder":      12,
+    "lightsleetandthunder":            12,
+    "lightsleetshowersandthunder":     12,
+    "sleetandthunder":                 12,
+    "sleetshowersandthunder":          12,
+    "heavysleetandthunder":            12,
+    "heavysleetshowersandthunder":     12,
+    "lightsnowandthunder":             12,
+    "lightsnowshowersandthunder":      12,
+    "snowandthunder":                  12,
+    "snowshowersandthunder":           12,
+    "heavysnowandthunder":             12,
+    "heavysnowshowersandthunder":      12,
+}
+
+# Slot and daily register tables indexed by day (0-2) and slot (0-3)
+_SLOT_REGS = [
+    [
+        (HR_FC_D1_S0_CODE, HR_FC_D1_S0_TEMP, HR_FC_D1_S0_WIND),
+        (HR_FC_D1_S1_CODE, HR_FC_D1_S1_TEMP, HR_FC_D1_S1_WIND),
+        (HR_FC_D1_S2_CODE, HR_FC_D1_S2_TEMP, HR_FC_D1_S2_WIND),
+        (HR_FC_D1_S3_CODE, HR_FC_D1_S3_TEMP, HR_FC_D1_S3_WIND),
+    ],
+    [
+        (HR_FC_D2_S0_CODE, HR_FC_D2_S0_TEMP, HR_FC_D2_S0_WIND),
+        (HR_FC_D2_S1_CODE, HR_FC_D2_S1_TEMP, HR_FC_D2_S1_WIND),
+        (HR_FC_D2_S2_CODE, HR_FC_D2_S2_TEMP, HR_FC_D2_S2_WIND),
+        (HR_FC_D2_S3_CODE, HR_FC_D2_S3_TEMP, HR_FC_D2_S3_WIND),
+    ],
+    [
+        (HR_FC_D3_S0_CODE, HR_FC_D3_S0_TEMP, HR_FC_D3_S0_WIND),
+        (HR_FC_D3_S1_CODE, HR_FC_D3_S1_TEMP, HR_FC_D3_S1_WIND),
+        (HR_FC_D3_S2_CODE, HR_FC_D3_S2_TEMP, HR_FC_D3_S2_WIND),
+        (HR_FC_D3_S3_CODE, HR_FC_D3_S3_TEMP, HR_FC_D3_S3_WIND),
+    ],
+]
+
+_DAILY_REGS = [
+    (HR_FC_DAY1_CODE, HR_FC_DAY1_HIGH, HR_FC_DAY1_LOW, HR_FC_DAY1_WIND, HR_FC_DAY1_WEEKDAY),
+    (HR_FC_DAY2_CODE, HR_FC_DAY2_HIGH, HR_FC_DAY2_LOW, HR_FC_DAY2_WIND, HR_FC_DAY2_WEEKDAY),
+    (HR_FC_DAY3_CODE, HR_FC_DAY3_HIGH, HR_FC_DAY3_LOW, HR_FC_DAY3_WIND, HR_FC_DAY3_WEEKDAY),
+]
+
+_SLOT_HOURS = [0, 6, 12, 18]
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -127,7 +203,6 @@ store   = ModbusSlaveContext(
 )
 context = ModbusServerContext(slaves=store, single=True)
 
-# Queue: (coil_index, script_entity_id) to fire after a write
 _trigger_queue: asyncio.Queue = asyncio.Queue()
 
 
@@ -136,60 +211,12 @@ def set_hr(index: int, value: float | None):
         return
     raw = int(round(value * 10))
     _hr_block.setValues(index, [raw])
-    log.info(f"[HR {index}] = {raw} ({value})")
+    log.debug(f"[HR {index}] = {raw} ({value})")
 
 
 def set_hr_int(index: int, value: int):
     _hr_block.setValues(index, [value])
-    log.info(f"[HR {index}] = {value}")
-
-
-def update_weather_state(state: dict):
-    temp = extract_temperature(WEATHER_ENTITY, state)
-    set_hr(HR_OUTSIDE_TEMP, temp)
-
-    code = WEATHER_CODES.get(state.get("state", ""), 0)
-    if code:
-        set_hr_int(HR_WEATHER_CODE, code)
-
-    attrs = state.get("attributes", {})
-    try:
-        wind_kmh = float(attrs["wind_speed"])
-        set_hr(HR_WIND_SPEED, wind_kmh / 3.6)  # km/h → m/s
-    except (KeyError, ValueError, TypeError):
-        pass
-    try:
-        set_hr_int(HR_HUMIDITY, int(float(attrs["humidity"])))
-    except (KeyError, ValueError, TypeError):
-        pass
-
-
-def update_forecast(forecast: list):
-    day_regs = [
-        (HR_FC_DAY1_CODE, HR_FC_DAY1_HIGH, HR_FC_DAY1_LOW, HR_FC_DAY1_WIND, HR_FC_DAY1_WEEKDAY),
-        (HR_FC_DAY2_CODE, HR_FC_DAY2_HIGH, HR_FC_DAY2_LOW, HR_FC_DAY2_WIND, HR_FC_DAY2_WEEKDAY),
-        (HR_FC_DAY3_CODE, HR_FC_DAY3_HIGH, HR_FC_DAY3_LOW, HR_FC_DAY3_WIND, HR_FC_DAY3_WEEKDAY),
-    ]
-    for i, (code_r, high_r, low_r, wind_r, wd_r) in enumerate(day_regs):
-        if i >= len(forecast):
-            break
-        day = forecast[i]
-        code = WEATHER_CODES.get(day.get("condition", ""), 0)
-        set_hr_int(code_r, code)
-        high = day.get("temperature")
-        if high is not None:
-            set_hr(high_r, float(high))
-        low = day.get("templow")
-        if low is not None:
-            set_hr(low_r, float(low))
-        wind = day.get("wind_speed")
-        if wind is not None:
-            set_hr(wind_r, float(wind) / 3.6)  # km/h → m/s
-        dt_str = day.get("datetime", "")
-        if dt_str:
-            dt = datetime.fromisoformat(dt_str)
-            set_hr_int(wd_r, dt.isoweekday())
-    log.info(f"[FORECAST] updated {min(3, len(forecast))} days")
+    log.debug(f"[HR {index}] = {value}")
 
 
 def get_coil(index: int) -> bool:
@@ -198,6 +225,113 @@ def get_coil(index: int) -> bool:
 
 def reset_coil(index: int):
     _coil_block.setValues(index, [0])
+
+
+# ---------------------------------------------------------------------------
+# yr.no forecast
+# ---------------------------------------------------------------------------
+def _yr_code(symbol: str) -> int:
+    for suffix in ("_day", "_night", "_polartwilight"):
+        if symbol.endswith(suffix):
+            symbol = symbol[: -len(suffix)]
+            break
+    return YR_SYMBOL_MAP.get(symbol, 0)
+
+
+def _process_yr(data: dict):
+    timeseries = data["properties"]["timeseries"]
+
+    ts_map: dict[datetime, dict] = {}
+    for entry in timeseries:
+        dt = datetime.fromisoformat(entry["time"].replace("Z", "+00:00"))
+        ts_map[dt.replace(minute=0, second=0, microsecond=0)] = entry
+
+    local_tz = datetime.now().astimezone().tzinfo
+    now_local = datetime.now(local_tz)
+    now_utc   = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
+
+    # Current conditions
+    if now_utc in ts_map:
+        entry = ts_map[now_utc]
+        d = entry["data"]["instant"]["details"]
+        set_hr(HR_OUTSIDE_TEMP, d.get("air_temperature"))
+        set_hr(HR_WIND_SPEED,   d.get("wind_speed"))  # yr.no already m/s
+        hum = d.get("relative_humidity")
+        if hum is not None:
+            set_hr_int(HR_HUMIDITY, int(round(hum)))
+        sym = (entry["data"].get("next_1_hours") or {}).get("summary", {}).get("symbol_code", "")
+        code = _yr_code(sym)
+        if code:
+            set_hr_int(HR_WEATHER_CODE, code)
+
+    today_local = now_local.date()
+
+    for day_i, (slot_regs, daily_regs) in enumerate(zip(_SLOT_REGS, _DAILY_REGS)):
+        day_date  = today_local + timedelta(days=day_i)
+        code_r, high_r, low_r, wind_r, wd_r = daily_regs
+
+        set_hr_int(wd_r, date(day_date.year, day_date.month, day_date.day).isoweekday())
+
+        temps: list[float] = []
+        winds: list[float] = []
+        noon_code  = 0
+        first_code = 0
+
+        for slot_i, (sc_r, st_r, sw_r) in enumerate(slot_regs):
+            hour     = _SLOT_HOURS[slot_i]
+            local_dt = datetime(day_date.year, day_date.month, day_date.day,
+                                hour, tzinfo=local_tz)
+            utc_dt   = local_dt.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
+
+            entry = ts_map.get(utc_dt)
+            if entry is None:
+                continue
+
+            d   = entry["data"]["instant"]["details"]
+            n6  = entry["data"].get("next_6_hours") or {}
+            n1  = entry["data"].get("next_1_hours") or {}
+            sym = (n6.get("summary") or n1.get("summary") or {}).get("symbol_code", "")
+            code = _yr_code(sym)
+
+            set_hr_int(sc_r, code)
+            temp = d.get("air_temperature")
+            wind = d.get("wind_speed")
+            set_hr(st_r, temp)
+            set_hr(sw_r, wind)
+
+            if temp is not None:
+                temps.append(float(temp))
+            if wind is not None:
+                winds.append(float(wind))
+            if code and not first_code:
+                first_code = code
+            if hour == 12 and code:
+                noon_code = code
+
+        day_code = noon_code or first_code
+        if day_code:
+            set_hr_int(code_r, day_code)
+        if temps:
+            set_hr(high_r, max(temps))
+            set_hr(low_r,  min(temps))
+        if winds:
+            set_hr(wind_r, max(winds))
+
+    log.info(f"[YR] updated forecast for {today_local}")
+
+
+async def yr_poller():
+    async with aiohttp.ClientSession(headers=YR_HEADERS) as session:
+        while True:
+            try:
+                async with session.get(YR_URL) as resp:
+                    if resp.status == 200:
+                        _process_yr(await resp.json(content_type=None))
+                    else:
+                        log.warning(f"[YR] HTTP {resp.status}")
+            except Exception as e:
+                log.error(f"[YR] {e}")
+            await asyncio.sleep(1800)  # met.no asks for max 1 req / 30 min per location
 
 
 # ---------------------------------------------------------------------------
@@ -229,12 +363,10 @@ async def script_caller(session: aiohttp.ClientSession):
 
 
 # ---------------------------------------------------------------------------
-# HA WebSocket — subscribe to state changes for sensor entities
+# HA WebSocket — indoor temperature sensors only
 # ---------------------------------------------------------------------------
-def extract_temperature(entity_id: str, state: dict) -> float | None:
+def _extract_temp(state: dict) -> float | None:
     try:
-        if entity_id.startswith("weather."):
-            return float(state["attributes"]["temperature"])
         return float(state["state"])
     except (KeyError, ValueError, TypeError):
         return None
@@ -251,20 +383,12 @@ async def ha_websocket(session: aiohttp.ClientSession):
 
                 await ws.send_json({"type": "auth", "access_token": HA_TOKEN})
 
-                await ws.send_json({"id": msg_id, "type": "subscribe_events", "event_type": "state_changed"})
+                await ws.send_json({"id": msg_id, "type": "subscribe_events",
+                                    "event_type": "state_changed"})
                 msg_id += 1
 
                 await ws.send_json({"id": msg_id, "type": "get_states"})
                 get_states_id = msg_id
-                msg_id += 1
-
-                await ws.send_json({
-                    "id": msg_id,
-                    "type": "weather/subscribe_forecast",
-                    "forecast_type": "daily",
-                    "entity_id": WEATHER_ENTITY,
-                })
-                forecast_id = msg_id
                 msg_id += 1
 
                 async for msg in ws:
@@ -275,27 +399,15 @@ async def ha_websocket(session: aiohttp.ClientSession):
                     if data.get("type") == "result" and data.get("id") == get_states_id:
                         for state in data.get("result", []):
                             eid = state["entity_id"]
-                            if eid == WEATHER_ENTITY:
-                                update_weather_state(state)
-                            elif eid in SENSOR_ENTITIES:
-                                temp = extract_temperature(eid, state)
-                                set_hr(SENSOR_ENTITIES[eid], temp)
-
-                    elif data.get("id") == forecast_id and data.get("type") == "event":
-                        forecast = data.get("event", {}).get("forecast", [])
-                        if forecast:
-                            update_forecast(forecast)
+                            if eid in SENSOR_ENTITIES:
+                                set_hr(SENSOR_ENTITIES[eid], _extract_temp(state))
 
                     elif data.get("type") == "event":
-                        event = data.get("event", {})
-                        ed = event.get("data", {})
+                        ed  = data.get("event", {}).get("data", {})
                         eid = ed.get("entity_id", "")
-                        new_state = ed.get("new_state") or {}
-                        if eid == WEATHER_ENTITY:
-                            update_weather_state(new_state)
-                        elif eid in SENSOR_ENTITIES:
-                            temp = extract_temperature(eid, new_state)
-                            set_hr(SENSOR_ENTITIES[eid], temp)
+                        if eid in SENSOR_ENTITIES:
+                            new_state = ed.get("new_state") or {}
+                            set_hr(SENSOR_ENTITIES[eid], _extract_temp(new_state))
 
         except Exception as e:
             log.error(f"[WS] error: {e} — reconnecting in 10s")
@@ -313,7 +425,7 @@ async def clock_updater():
         _hr_block.setValues(HR_DAY,     [now.day])
         _hr_block.setValues(HR_MONTH,   [now.month])
         _hr_block.setValues(HR_YEAR,    [now.year])
-        _hr_block.setValues(HR_WEEKDAY, [now.isoweekday()])  # 1=Mon, 7=Sun
+        _hr_block.setValues(HR_WEEKDAY, [now.isoweekday()])
         await asyncio.sleep(1)
 
 
@@ -324,20 +436,21 @@ async def run():
     log.info(f"Starting Modbus TCP server on 0.0.0.0:5020 (pymodbus {pymodbus_version})")
 
     identity = ModbusDeviceIdentification()
-    identity.VendorName = "home-assistant-bridge"
+    identity.VendorName  = "home-assistant-bridge"
     identity.ProductName = "modbus-server"
     identity.MajorMinorRevision = pymodbus_version
 
     connector = aiohttp.TCPConnector()
-    async with aiohttp.ClientSession(headers=HA_HEADERS, connector=connector) as session:
+    async with aiohttp.ClientSession(headers=HA_HEADERS, connector=connector) as ha_session:
         async with asyncio.TaskGroup() as tg:
             tg.create_task(StartAsyncTcpServer(
                 context, identity=identity, address=("0.0.0.0", 5020)
             ))
-            tg.create_task(ha_websocket(session))
-            tg.create_task(script_caller(session))
+            tg.create_task(ha_websocket(ha_session))
+            tg.create_task(script_caller(ha_session))
             tg.create_task(watch_coils())
             tg.create_task(clock_updater())
+            tg.create_task(yr_poller())
 
 
 if __name__ == "__main__":
