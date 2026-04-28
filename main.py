@@ -107,52 +107,52 @@ SCRIPT_COILS = {
 # Suffix _day / _night / _polartwilight is stripped before lookup
 # Code 2 is reserved for clearsky at night (weather_clearnight.svg)
 _CODE_NAMES = {
-    0: "?", 1: "clearday", 2: "clearnight", 3: "pcloudy", 4: "cloudy",
-    5: "fog", 6: "rain", 7: "heavyrain", 8: "snow", 9: "sleet",
-    11: "thunder", 12: "tstorm",
+    0: "clearday", 1: "clearnight", 2: "pcloudy", 3: "cloudy",
+    4: "fog", 5: "rain", 6: "heavyrain", 7: "snow", 8: "sleet",
+    10: "thunder", 11: "tstorm",
 }
 YR_SYMBOL_MAP = {
-    "clearsky":                        1,
-    "fair":                            1,
-    "partlycloudy":                    3,
-    "cloudy":                          4,
-    "fog":                             5,
-    "lightrain":                       6,
-    "lightrainshowers":                6,
-    "rain":                            6,
-    "rainshowers":                     6,
-    "heavyrain":                       7,
-    "heavyrainshowers":                7,
-    "lightsleet":                      9,
-    "lightsleetshowers":               9,
-    "sleet":                           9,
-    "sleetshowers":                    9,
-    "heavysleet":                      9,
-    "heavysleetshowers":               9,
-    "lightsnow":                       8,
-    "lightsnowshowers":                8,
-    "snow":                            8,
-    "snowshowers":                     8,
-    "heavysnow":                       8,
-    "heavysnowshowers":                8,
-    "lightrainandthunder":             12,
-    "lightrainshowersandthunder":      12,
-    "rainandthunder":                  12,
-    "rainshowersandthunder":           12,
-    "heavyrainandthunder":             12,
-    "heavyrainshowersandthunder":      12,
-    "lightsleetandthunder":            12,
-    "lightsleetshowersandthunder":     12,
-    "sleetandthunder":                 12,
-    "sleetshowersandthunder":          12,
-    "heavysleetandthunder":            12,
-    "heavysleetshowersandthunder":     12,
-    "lightsnowandthunder":             12,
-    "lightsnowshowersandthunder":      12,
-    "snowandthunder":                  12,
-    "snowshowersandthunder":           12,
-    "heavysnowandthunder":             12,
-    "heavysnowshowersandthunder":      12,
+    "clearsky":                        0,   # weather_clear
+    "fair":                            0,   # weather_clear
+    "partlycloudy":                    2,   # weather_partlycloudy
+    "cloudy":                          3,   # weather_cloudy
+    "fog":                             4,   # weather_fog
+    "lightrain":                       5,   # weather_rain
+    "lightrainshowers":                5,
+    "rain":                            5,
+    "rainshowers":                     5,
+    "heavyrain":                       6,   # weather_heavyrain
+    "heavyrainshowers":                6,
+    "lightsleet":                      8,   # weather_sleet
+    "lightsleetshowers":               8,
+    "sleet":                           8,
+    "sleetshowers":                    8,
+    "heavysleet":                      8,
+    "heavysleetshowers":               8,
+    "lightsnow":                       7,   # weather_snow
+    "lightsnowshowers":                7,
+    "snow":                            7,
+    "snowshowers":                     7,
+    "heavysnow":                       7,
+    "heavysnowshowers":                7,
+    "lightrainandthunder":             11,  # weather_thunderrain
+    "lightrainshowersandthunder":      11,
+    "rainandthunder":                  11,
+    "rainshowersandthunder":           11,
+    "heavyrainandthunder":             11,
+    "heavyrainshowersandthunder":      11,
+    "lightsleetandthunder":            11,
+    "lightsleetshowersandthunder":     11,
+    "sleetandthunder":                 11,
+    "sleetshowersandthunder":          11,
+    "heavysleetandthunder":            11,
+    "heavysleetshowersandthunder":     11,
+    "lightsnowandthunder":             11,
+    "lightsnowshowersandthunder":      11,
+    "snowandthunder":                  11,
+    "snowshowersandthunder":           11,
+    "heavysnowandthunder":             11,
+    "heavysnowshowersandthunder":      11,
 }
 
 # Slot and daily register tables indexed by day (0-2) and slot (0-3)
@@ -249,8 +249,8 @@ def _yr_code(symbol: str) -> int:
             symbol = symbol[: -len(suffix)]
             break
     code = YR_SYMBOL_MAP.get(symbol, 0)
-    if is_night and code == 1:
-        return 2  # clearsky/fair at night → weather_clearnight (moon)
+    if is_night and code == 0:
+        return 1  # clearsky/fair at night → weather_clearnight (moon)
     return code
 
 
