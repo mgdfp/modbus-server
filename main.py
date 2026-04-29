@@ -466,9 +466,6 @@ async def clock_updater():
         _hr_block.setValues(HR_SLOT0_OPACITY, [s0])
         _hr_block.setValues(HR_SLOT1_OPACITY, [s1])
         _hr_block.setValues(HR_SLOT2_OPACITY, [s2])
-        # TEST: fake precip values to verify drop icons
-        _hr_block.setValues(HR_FC_D2_S0_PRECIP, [25])  # 2.5 mm
-        _hr_block.setValues(HR_FC_D2_S1_PRECIP, [8])   # 0.8 mm
         if now.second == 0:
             log.info(f"slot={slot} opacity: s0={s0} s1={s1} s2={s2}")
         await asyncio.sleep(1)
