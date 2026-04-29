@@ -300,9 +300,10 @@ def _process_yr(data: dict):
             utc_dt   = local_dt.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
             entry = ts_map.get(utc_dt)
-            if entry is None and utc_dt < now_utc:
+            if entry is None:
                 utc_slot_end = utc_dt + timedelta(hours=6)
-                candidate = now_utc
+                start = max(utc_dt, now_utc) if utc_dt < now_utc else utc_dt
+                candidate = start
                 while candidate < utc_slot_end:
                     if candidate in ts_map:
                         entry = ts_map[candidate]
