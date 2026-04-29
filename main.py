@@ -319,7 +319,13 @@ def _process_yr(data: dict):
             code = _yr_code(sym)
 
             set_hr_int(sc_r, code)
-            temp = d.get("air_temperature")
+            n6d = n6.get("details") or {}
+            t_max = n6d.get("air_temperature_max")
+            t_min = n6d.get("air_temperature_min")
+            if t_max is not None and t_min is not None:
+                temp = (t_max + t_min) / 2
+            else:
+                temp = d.get("air_temperature")
             set_hr(st_r, temp)
 
             precip = (n6.get("details") or n1.get("details") or {}).get("precipitation_amount")
@@ -467,8 +473,6 @@ async def clock_updater():
         _hr_block.setValues(HR_SLOT0_OPACITY, [s0])
         _hr_block.setValues(HR_SLOT1_OPACITY, [s1])
         _hr_block.setValues(HR_SLOT2_OPACITY, [s2])
-        if now.second == 0:
-            log.info(f"slot={slot} opacity: s0={s0} s1={s1} s2={s2}")
         await asyncio.sleep(1)
 
 
