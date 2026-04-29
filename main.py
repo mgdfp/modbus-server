@@ -460,9 +460,14 @@ async def clock_updater():
         _hr_block.setValues(HR_YEAR,    [now.year])
         _hr_block.setValues(HR_WEEKDAY, [now.isoweekday()])
         slot = now.hour // 6
-        _hr_block.setValues(HR_SLOT0_OPACITY, [30 if slot > 0 else 100])
-        _hr_block.setValues(HR_SLOT1_OPACITY, [30 if slot > 1 else 100])
-        _hr_block.setValues(HR_SLOT2_OPACITY, [30 if slot > 2 else 100])
+        s0 = 30 if slot > 0 else 100
+        s1 = 30 if slot > 1 else 100
+        s2 = 30 if slot > 2 else 100
+        _hr_block.setValues(HR_SLOT0_OPACITY, [s0])
+        _hr_block.setValues(HR_SLOT1_OPACITY, [s1])
+        _hr_block.setValues(HR_SLOT2_OPACITY, [s2])
+        if now.second == 0:
+            log.info(f"slot={slot} opacity: s0={s0} s1={s1} s2={s2}")
         await asyncio.sleep(1)
 
 
