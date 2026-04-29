@@ -48,7 +48,7 @@ HR_WEEKDAY         = 11  # 1=Mon, 7=Sun
 HR_WEATHER_CODE    = 12
 HR_WIND_SPEED      = 13
 HR_HUMIDITY        = 14
-HR_ROOM5_TEMP      = 15
+HR_GARAGE_TEMP      = 15
 HR_ROOM6_TEMP      = 16
 # Daily summary (HR 17-31) — kept for backward compat with current page1 display
 HR_FC_DAY1_CODE    = 17
@@ -96,6 +96,7 @@ SENSOR_ENTITIES = {
     "sensor.bedroom_thermostat_air_temperature":     HR_BEDROOM_TEMP,
     "sensor.living_room_thermostat_air_temperature": HR_LIVINGROOM_TEMP,
     "sensor.glasshouse_temperature_temperature":     HR_GLASSHOUSE_TEMP,
+    "sensor.growing_tent_temperature_temperature":    HR_GARAGE_TEMP,
 }
 
 # HA scripts that map to coils
