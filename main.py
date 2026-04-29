@@ -111,7 +111,11 @@ SCRIPT_COILS = {
 _CODE_NAMES = {
     0: "clearday", 1: "clearnight", 2: "pcloudy", 3: "cloudy",
     4: "fog", 5: "rain", 6: "heavyrain", 7: "snow", 8: "sleet",
-    10: "thunder", 11: "tstorm",
+    9: "pcloudy_night", 10: "thunder", 11: "tstorm",
+}
+_NIGHT_CODES = {
+    0: 1,   # clearday → clearnight
+    2: 9,   # pcloudy  → pcloudy_night
 }
 YR_SYMBOL_MAP = {
     "clearsky":                        0,   # weather_clear
@@ -251,8 +255,8 @@ def _yr_code(symbol: str) -> int:
             symbol = symbol[: -len(suffix)]
             break
     code = YR_SYMBOL_MAP.get(symbol, 0)
-    if is_night and code == 0:
-        return 1  # clearsky/fair at night → weather_clearnight (moon)
+    if is_night and code in _NIGHT_CODES:
+        return _NIGHT_CODES[code]
     return code
 
 
