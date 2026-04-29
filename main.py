@@ -84,6 +84,7 @@ HR_FC_D3_S3_CODE = 65;  HR_FC_D3_S3_TEMP = 66;  HR_FC_D3_S3_PRECIP = 67
 HR_SLOT0_OPACITY = 68
 HR_SLOT1_OPACITY = 69
 HR_SLOT2_OPACITY = 70
+HR_IS_SUMMERTIME = 71
 
 # Coil indices (1-based)
 COIL_ALL_LIGHTS_OFF = 1
@@ -473,6 +474,8 @@ async def clock_updater():
         _hr_block.setValues(HR_SLOT0_OPACITY, [s0])
         _hr_block.setValues(HR_SLOT1_OPACITY, [s1])
         _hr_block.setValues(HR_SLOT2_OPACITY, [s2])
+        summertime = 1 if datetime.now(DISPLAY_TZ).dst() else 0
+        _hr_block.setValues(HR_IS_SUMMERTIME, [summertime])
         await asyncio.sleep(1)
 
 
