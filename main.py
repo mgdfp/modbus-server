@@ -80,10 +80,10 @@ HR_FC_D3_S0_CODE = 56;  HR_FC_D3_S0_TEMP = 57;  HR_FC_D3_S0_PRECIP = 58
 HR_FC_D3_S1_CODE = 59;  HR_FC_D3_S1_TEMP = 60;  HR_FC_D3_S1_PRECIP = 61
 HR_FC_D3_S2_CODE = 62;  HR_FC_D3_S2_TEMP = 63;  HR_FC_D3_S2_PRECIP = 64
 HR_FC_D3_S3_CODE = 65;  HR_FC_D3_S3_TEMP = 66;  HR_FC_D3_S3_PRECIP = 67
-# Past-slot flags for today's column dimming (HR 68-70)
-HR_SLOT0_PAST    = 68   # 1 when hour >= 6
-HR_SLOT1_PAST    = 69   # 1 when hour >= 12
-HR_SLOT2_PAST    = 70   # 1 when hour >= 18
+# Per-slot opacity for today's column (HR 68-70): 100 = visible, 30 = dimmed
+HR_SLOT0_OPACITY = 68
+HR_SLOT1_OPACITY = 69
+HR_SLOT2_OPACITY = 70
 
 # Coil indices (1-based)
 COIL_ALL_LIGHTS_OFF = 1
@@ -460,9 +460,9 @@ async def clock_updater():
         _hr_block.setValues(HR_YEAR,    [now.year])
         _hr_block.setValues(HR_WEEKDAY, [now.isoweekday()])
         slot = now.hour // 6
-        _hr_block.setValues(HR_SLOT0_PAST, [1 if slot > 0 else 0])
-        _hr_block.setValues(HR_SLOT1_PAST, [1 if slot > 1 else 0])
-        _hr_block.setValues(HR_SLOT2_PAST, [1 if slot > 2 else 0])
+        _hr_block.setValues(HR_SLOT0_OPACITY, [30 if slot > 0 else 100])
+        _hr_block.setValues(HR_SLOT1_OPACITY, [30 if slot > 1 else 100])
+        _hr_block.setValues(HR_SLOT2_OPACITY, [30 if slot > 2 else 100])
         await asyncio.sleep(1)
 
 
