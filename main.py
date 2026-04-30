@@ -86,6 +86,8 @@ HR_SLOT1_OPACITY = 69
 HR_SLOT2_OPACITY = 70
 HR_IS_SUMMERTIME = 71
 
+HR_TEST_STRING = 100  # 10 registers (20 chars)
+
 # Coil indices (1-based)
 COIL_ALL_LIGHTS_OFF = 1
 COIL_COMING_HOME    = 2
@@ -239,6 +241,20 @@ def set_hr_int(index: int, value: int):
 
 def get_coil(index: int) -> bool:
     return bool(_coil_block.getValues(index, 1)[0])
+
+
+def set_hr_string(start_index: int, text: str, max_chars: int = 20):
+    encoded = text.encode("ascii", errors="replace")[:max_chars]
+    if len(encoded) % 2:
+        encoded += b"\x00"
+    values = []
+    for i in range(0, len(encoded), 2):
+        values.append((encoded[i] << 8) | encoded[i + 1])
+    total_regs = max_chars // 2
+    while len(values) < total_regs:
+        values.append(0)
+    _hr_block.setValues(start_index, values)
+    log.debug(f"[HR {start_index}] = '{text}' ({len(values)} regs)")
 
 
 def reset_coil(index: int):
@@ -494,6 +510,8 @@ async def run():
     identity.VendorName  = "home-assistant-bridge"
     identity.ProductName = "modbus-server"
     identity.MajorMinorRevision = pymodbus_version
+
+    set_hr_string(HR_TEST_STRING, "Hello JMobile!")
 
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(headers=HA_HEADERS, connector=connector) as ha_session:
