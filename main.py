@@ -86,24 +86,22 @@ HR_SLOT1_OPACITY = 69
 HR_SLOT2_OPACITY = 70
 HR_IS_SUMMERTIME = 71
 
-HR_TEST_STRING = 100  # 10 registers (20 chars)
-
 # ---------------------------------------------------------------------------
-# Battery register layout
+# Battery register layout  (flat list, sorted by pct ascending, offline first)
 # ---------------------------------------------------------------------------
-# Each battery type gets a block: 1 count register + N slots
-# Each slot: 12 name registers (24 chars) + 1 percentage register = 13 registers
+# index 200-203: summary shorts (total, shown, under20, under50)
+# index 210 + n*25: slot n  — name(12) + area(8) + type(4) + pct(1)
 BATT_NAME_CHARS = 24
-BATT_NAME_REGS = BATT_NAME_CHARS // 2   # 12
+BATT_NAME_REGS  = BATT_NAME_CHARS // 2   # 12
 BATT_AREA_CHARS = 16
-BATT_AREA_REGS = BATT_AREA_CHARS // 2   # 8
-BATT_SLOT_REGS = BATT_NAME_REGS + BATT_AREA_REGS + 1  # 21
-BATT_MAX_SLOTS = 10
-BATT_TYPE_BLOCK = 1 + BATT_MAX_SLOTS * BATT_SLOT_REGS  # 211
-BATT_BASE = 200
+BATT_AREA_REGS  = BATT_AREA_CHARS // 2   # 8
+BATT_TYPE_CHARS = 8
+BATT_TYPE_REGS  = BATT_TYPE_CHARS // 2   # 4
+BATT_SLOT_REGS  = BATT_NAME_REGS + BATT_AREA_REGS + BATT_TYPE_REGS + 1  # 25
+BATT_SLOTS      = 15
+BATT_BASE       = 200   # summary block: total, shown, under20, under50
+BATT_SLOT_BASE  = BATT_BASE + 10  # first slot starts at index 210
 
-BATT_TYPES = ["CR2032", "CR2430", "CR2450", "CR17450", "AA", "AAA", "ANNEN"]
-BATT_TYPE_BASE = {t: BATT_BASE + i * BATT_TYPE_BLOCK for i, t in enumerate(BATT_TYPES)}
 BATT_EXCLUDE_LABELS = {"Built-in", "Built-in (USB)"}
 
 # Coil indices (1-based)
@@ -552,29 +550,32 @@ def _update_battery_state(entity_id: str, new_state: dict):
 
 
 def _write_battery_registers():
-    grouped: dict[str, list[dict]] = {t: [] for t in BATT_TYPES}
-    for info in _batt_entities.values():
-        if info["type"] in grouped:
-            grouped[info["type"]].append(info)
+    all_devs = sorted(
+        _batt_entities.values(),
+        key=lambda d: (0 if d["pct"] == 999 else 1, d["pct"])
+    )
+    total   = len(all_devs)
+    shown   = min(BATT_SLOTS, total)
+    under20 = sum(1 for d in all_devs if d["pct"] != 999 and d["pct"] < 20)
+    under50 = sum(1 for d in all_devs if d["pct"] != 999 and d["pct"] < 50)
 
-    for btype in BATT_TYPES:
-        devices = sorted(grouped[btype], key=lambda d: d["pct"])
-        base = BATT_TYPE_BASE[btype]
-        set_hr_int(base, len(devices))
-        for i in range(BATT_MAX_SLOTS):
-            slot_base = base + 1 + i * BATT_SLOT_REGS
-            if i < len(devices):
-                set_hr_string(slot_base, devices[i]["name"], BATT_NAME_CHARS)
-                set_hr_string(slot_base + BATT_NAME_REGS, devices[i]["area"], BATT_AREA_CHARS)
-                set_hr_int(slot_base + BATT_NAME_REGS + BATT_AREA_REGS, devices[i]["pct"])
-            else:
-                set_hr_string(slot_base, "", BATT_NAME_CHARS)
-                set_hr_string(slot_base + BATT_NAME_REGS, "", BATT_AREA_CHARS)
-                set_hr_int(slot_base + BATT_NAME_REGS + BATT_AREA_REGS, 0)
+    _hr_block.setValues(BATT_BASE, [total, shown, under20, under50])
 
-    total = sum(len(v) for v in grouped.values())
-    log.info(f"[BATT] updated registers: {total} devices across "
-             f"{sum(1 for v in grouped.values() if v)} types")
+    for i in range(BATT_SLOTS):
+        sb = BATT_SLOT_BASE + i * BATT_SLOT_REGS
+        if i < len(all_devs):
+            d = all_devs[i]
+            set_hr_string(sb,                                              d["name"], BATT_NAME_CHARS)
+            set_hr_string(sb + BATT_NAME_REGS,                            d["area"], BATT_AREA_CHARS)
+            set_hr_string(sb + BATT_NAME_REGS + BATT_AREA_REGS,          d["type"], BATT_TYPE_CHARS)
+            set_hr_int(   sb + BATT_NAME_REGS + BATT_AREA_REGS + BATT_TYPE_REGS, d["pct"])
+        else:
+            set_hr_string(sb,                                              "", BATT_NAME_CHARS)
+            set_hr_string(sb + BATT_NAME_REGS,                            "", BATT_AREA_CHARS)
+            set_hr_string(sb + BATT_NAME_REGS + BATT_AREA_REGS,          "", BATT_TYPE_CHARS)
+            set_hr_int(   sb + BATT_NAME_REGS + BATT_AREA_REGS + BATT_TYPE_REGS, 0)
+
+    log.info(f"[BATT] {total} devices, showing {shown}: under20={under20}, under50={under50}")
 
 
 # ---------------------------------------------------------------------------
@@ -712,8 +713,6 @@ async def run():
     identity.VendorName  = "home-assistant-bridge"
     identity.ProductName = "modbus-server"
     identity.MajorMinorRevision = pymodbus_version
-
-    set_hr_string(HR_TEST_STRING, "Hello JMobile!")
 
     connector = aiohttp.TCPConnector()
     async with aiohttp.ClientSession(headers=HA_HEADERS, connector=connector) as ha_session:
