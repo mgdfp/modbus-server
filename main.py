@@ -95,9 +95,11 @@ HR_TEST_STRING = 100  # 10 registers (20 chars)
 # Each slot: 12 name registers (24 chars) + 1 percentage register = 13 registers
 BATT_NAME_CHARS = 24
 BATT_NAME_REGS = BATT_NAME_CHARS // 2   # 12
-BATT_SLOT_REGS = BATT_NAME_REGS + 1     # 13
+BATT_AREA_CHARS = 16
+BATT_AREA_REGS = BATT_AREA_CHARS // 2   # 8
+BATT_SLOT_REGS = BATT_NAME_REGS + BATT_AREA_REGS + 1  # 21
 BATT_MAX_SLOTS = 10
-BATT_TYPE_BLOCK = 1 + BATT_MAX_SLOTS * BATT_SLOT_REGS  # 131
+BATT_TYPE_BLOCK = 1 + BATT_MAX_SLOTS * BATT_SLOT_REGS  # 211
 BATT_BASE = 200
 
 BATT_TYPES = ["CR2032", "CR2430", "CR2450", "CR17450", "AA", "AAA"]
@@ -229,7 +231,7 @@ log.addHandler(logging.StreamHandler())
 # Datastore
 # ---------------------------------------------------------------------------
 _coil_block = ModbusSequentialDataBlock(0, [0] * 200)
-_hr_block    = ModbusSequentialDataBlock(0, [0] * 1200)
+_hr_block    = ModbusSequentialDataBlock(0, [0] * 1600)
 
 store   = ModbusSlaveContext(
     di=ModbusSequentialDataBlock(0, [0] * 200),
@@ -454,7 +456,8 @@ def _clean_battery_name(friendly_name: str) -> str:
     return friendly_name
 
 
-def _setup_battery_tracking(labels: list, entities: list, devices: list, states: list):
+def _setup_battery_tracking(labels: list, entities: list, devices: list,
+                            areas: list, states: list):
     _batt_label_map.clear()
     _batt_entities.clear()
 
@@ -466,12 +469,20 @@ def _setup_battery_tracking(labels: list, entities: list, devices: list, states:
                 _batt_label_map[label["label_id"]] = btype
     log.info(f"[BATT] labels: {_batt_label_map}")
 
+    area_names: dict[str, str] = {}
+    for area in areas:
+        area_names[area["area_id"]] = area.get("name", "")
+
     device_batt_type: dict[str, str] = {}
+    device_area: dict[str, str] = {}
     for dev in devices:
         for lid in dev.get("labels", []):
             if lid in _batt_label_map:
                 device_batt_type[dev["id"]] = _batt_label_map[lid]
                 break
+        aid = dev.get("area_id")
+        if aid and aid in area_names:
+            device_area[dev["id"]] = area_names[aid]
 
     entity_device: dict[str, str] = {}
     entity_labels: dict[str, list[str]] = {}
@@ -482,7 +493,6 @@ def _setup_battery_tracking(labels: list, entities: list, devices: list, states:
         if ent.get("labels"):
             entity_labels[eid] = ent["labels"]
 
-    state_map = {s["entity_id"]: s for s in states}
     entity_reg = {ent["entity_id"]: ent for ent in entities if "entity_id" in ent}
 
     for state in states:
@@ -507,18 +517,22 @@ def _setup_battery_tracking(labels: list, entities: list, devices: list, states:
         if not btype:
             continue
 
+        dev_id = ent.get("device_id") or entity_device.get(eid)
+        area = device_area.get(dev_id, "") if dev_id else ""
+
         friendly = attrs.get("friendly_name", eid)
         name = _clean_battery_name(friendly)
         try:
             pct = int(round(float(state.get("state", 0))))
         except (ValueError, TypeError):
-            pct = 999  # unavailable / unknown
+            pct = 999
 
-        _batt_entities[eid] = {"type": btype, "name": name, "pct": pct}
+        _batt_entities[eid] = {"type": btype, "name": name, "area": area, "pct": pct}
 
     log.info(f"[BATT] tracking {len(_batt_entities)} battery entities:")
     for eid, info in sorted(_batt_entities.items()):
-        log.info(f"[BATT]   {info['type']:10s} {info['pct']:4d}%  {info['name']}")
+        log.info(f"[BATT]   {info['type']:10s} {info['pct']:4d}%  "
+                 f"{info['area']:16s}  {info['name']}")
 
     _write_battery_registers()
 
@@ -551,10 +565,12 @@ def _write_battery_registers():
             slot_base = base + 1 + i * BATT_SLOT_REGS
             if i < len(devices):
                 set_hr_string(slot_base, devices[i]["name"], BATT_NAME_CHARS)
-                set_hr_int(slot_base + BATT_NAME_REGS, devices[i]["pct"])
+                set_hr_string(slot_base + BATT_NAME_REGS, devices[i]["area"], BATT_AREA_CHARS)
+                set_hr_int(slot_base + BATT_NAME_REGS + BATT_AREA_REGS, devices[i]["pct"])
             else:
                 set_hr_string(slot_base, "", BATT_NAME_CHARS)
-                set_hr_int(slot_base + BATT_NAME_REGS, 0)
+                set_hr_string(slot_base + BATT_NAME_REGS, "", BATT_AREA_CHARS)
+                set_hr_int(slot_base + BATT_NAME_REGS + BATT_AREA_REGS, 0)
 
     total = sum(len(v) for v in grouped.values())
     log.info(f"[BATT] updated registers: {total} devices across "
@@ -602,6 +618,10 @@ async def ha_websocket(session: aiohttp.ClientSession):
                 devices_id = msg_id
                 msg_id += 1
 
+                await ws.send_json({"id": msg_id, "type": "config/area_registry/list"})
+                areas_id = msg_id
+                msg_id += 1
+
                 init_data: dict[str, list] = {}
                 batt_initialized = False
 
@@ -630,12 +650,16 @@ async def ha_websocket(session: aiohttp.ClientSession):
                         elif rid == devices_id:
                             init_data["devices"] = result
 
+                        elif rid == areas_id:
+                            init_data["areas"] = result
+
                         if (not batt_initialized
-                                and len(init_data) == 4):
+                                and len(init_data) == 5):
                             _setup_battery_tracking(
                                 init_data["labels"],
                                 init_data["entities"],
                                 init_data["devices"],
+                                init_data["areas"],
                                 init_data["states"],
                             )
                             batt_initialized = True
