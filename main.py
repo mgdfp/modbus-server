@@ -102,7 +102,7 @@ BATT_MAX_SLOTS = 10
 BATT_TYPE_BLOCK = 1 + BATT_MAX_SLOTS * BATT_SLOT_REGS  # 211
 BATT_BASE = 200
 
-BATT_TYPES = ["CR2032", "CR2430", "CR2450", "CR17450", "AA", "AAA"]
+BATT_TYPES = ["CR2032", "CR2430", "CR2450", "CR17450", "AA", "AAA", "ANNEN"]
 BATT_TYPE_BASE = {t: BATT_BASE + i * BATT_TYPE_BLOCK for i, t in enumerate(BATT_TYPES)}
 BATT_EXCLUDE_LABELS = {"Built-in", "Built-in (USB)"}
 
@@ -231,7 +231,7 @@ log.addHandler(logging.StreamHandler())
 # Datastore
 # ---------------------------------------------------------------------------
 _coil_block = ModbusSequentialDataBlock(0, [0] * 200)
-_hr_block    = ModbusSequentialDataBlock(0, [0] * 1600)
+_hr_block    = ModbusSequentialDataBlock(0, [0] * 1800)
 
 store   = ModbusSlaveContext(
     di=ModbusSequentialDataBlock(0, [0] * 200),
@@ -515,7 +515,7 @@ def _setup_battery_tracking(labels: list, entities: list, devices: list,
             if dev_id:
                 btype = device_batt_type.get(dev_id)
         if not btype:
-            continue
+            btype = "ANNEN"
 
         dev_id = ent.get("device_id") or entity_device.get(eid)
         area = device_area.get(dev_id, "") if dev_id else ""
