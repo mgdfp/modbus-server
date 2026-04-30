@@ -510,7 +510,7 @@ def _setup_battery_tracking(labels: list, entities: list, devices: list, states:
         try:
             pct = int(round(float(state.get("state", 0))))
         except (ValueError, TypeError):
-            pct = -1
+            pct = 999  # unavailable / unknown
 
         _batt_entities[eid] = {"type": btype, "name": name, "pct": pct}
 
@@ -527,7 +527,7 @@ def _update_battery_state(entity_id: str, new_state: dict):
     try:
         pct = int(round(float(new_state.get("state", 0))))
     except (ValueError, TypeError):
-        pct = -1
+        pct = 999
     _batt_entities[entity_id]["pct"] = pct
     friendly = new_state.get("attributes", {}).get("friendly_name")
     if friendly:
@@ -538,7 +538,7 @@ def _update_battery_state(entity_id: str, new_state: dict):
 def _write_battery_registers():
     grouped: dict[str, list[dict]] = {t: [] for t in BATT_TYPES}
     for info in _batt_entities.values():
-        if info["type"] in grouped and info["pct"] >= 0:
+        if info["type"] in grouped:
             grouped[info["type"]].append(info)
 
     for btype in BATT_TYPES:
