@@ -487,6 +487,8 @@ def _setup_battery_tracking(labels: list, entities: list, devices: list, states:
 
     for state in states:
         eid = state["entity_id"]
+        if not eid.startswith("sensor."):
+            continue
         attrs = state.get("attributes", {})
         dc = attrs.get("device_class", "")
         if dc != "battery":
