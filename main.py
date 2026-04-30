@@ -249,7 +249,7 @@ def set_hr_string(start_index: int, text: str, max_chars: int = 20):
         encoded += b"\x00"
     values = []
     for i in range(0, len(encoded), 2):
-        values.append((encoded[i] << 8) | encoded[i + 1])
+        values.append((encoded[i + 1] << 8) | encoded[i])
     total_regs = max_chars // 2
     while len(values) < total_regs:
         values.append(0)
