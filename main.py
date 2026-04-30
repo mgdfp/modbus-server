@@ -483,27 +483,29 @@ def _setup_battery_tracking(labels: list, entities: list, devices: list, states:
             entity_labels[eid] = ent["labels"]
 
     state_map = {s["entity_id"]: s for s in states}
+    entity_reg = {ent["entity_id"]: ent for ent in entities if "entity_id" in ent}
 
-    for ent in entities:
-        eid = ent.get("entity_id", "")
-        dc = ent.get("original_device_class") or ent.get("device_class", "")
+    for state in states:
+        eid = state["entity_id"]
+        attrs = state.get("attributes", {})
+        dc = attrs.get("device_class", "")
         if dc != "battery":
             continue
 
+        ent = entity_reg.get(eid, {})
         btype = None
         for lid in entity_labels.get(eid, []):
             if lid in _batt_label_map:
                 btype = _batt_label_map[lid]
                 break
         if not btype:
-            dev_id = entity_device.get(eid)
+            dev_id = ent.get("device_id") or entity_device.get(eid)
             if dev_id:
                 btype = device_batt_type.get(dev_id)
         if not btype:
             continue
 
-        state = state_map.get(eid, {})
-        friendly = state.get("attributes", {}).get("friendly_name", eid)
+        friendly = attrs.get("friendly_name", eid)
         name = _clean_battery_name(friendly)
         try:
             pct = int(round(float(state.get("state", 0))))
