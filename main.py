@@ -88,6 +88,22 @@ HR_IS_SUMMERTIME = 71
 
 HR_TEST_STRING = 100  # 10 registers (20 chars)
 
+# ---------------------------------------------------------------------------
+# Battery register layout
+# ---------------------------------------------------------------------------
+# Each battery type gets a block: 1 count register + N slots
+# Each slot: 12 name registers (24 chars) + 1 percentage register = 13 registers
+BATT_NAME_CHARS = 24
+BATT_NAME_REGS = BATT_NAME_CHARS // 2   # 12
+BATT_SLOT_REGS = BATT_NAME_REGS + 1     # 13
+BATT_MAX_SLOTS = 10
+BATT_TYPE_BLOCK = 1 + BATT_MAX_SLOTS * BATT_SLOT_REGS  # 131
+BATT_BASE = 200
+
+BATT_TYPES = ["CR2032", "CR2430", "CR2450", "CR17450", "AA", "AAA"]
+BATT_TYPE_BASE = {t: BATT_BASE + i * BATT_TYPE_BLOCK for i, t in enumerate(BATT_TYPES)}
+BATT_EXCLUDE_LABELS = {"Built-in", "Built-in (USB)"}
+
 # Coil indices (1-based)
 COIL_ALL_LIGHTS_OFF = 1
 COIL_COMING_HOME    = 2
@@ -213,7 +229,7 @@ log.addHandler(logging.StreamHandler())
 # Datastore
 # ---------------------------------------------------------------------------
 _coil_block = ModbusSequentialDataBlock(0, [0] * 200)
-_hr_block    = ModbusSequentialDataBlock(0, [0] * 200)
+_hr_block    = ModbusSequentialDataBlock(0, [0] * 1200)
 
 store   = ModbusSlaveContext(
     di=ModbusSequentialDataBlock(0, [0] * 200),
@@ -425,7 +441,124 @@ async def script_caller(session: aiohttp.ClientSession):
 
 
 # ---------------------------------------------------------------------------
-# HA WebSocket — indoor temperature sensors only
+# Battery tracking
+# ---------------------------------------------------------------------------
+_batt_label_map: dict[str, str] = {}    # label_id → type name (e.g. "CR2032")
+_batt_entities: dict[str, dict] = {}    # entity_id → {type, name, pct}
+
+
+def _clean_battery_name(friendly_name: str) -> str:
+    for suffix in (" Battery Level", " Battery level", " Battery"):
+        if friendly_name.endswith(suffix):
+            return friendly_name[: -len(suffix)]
+    return friendly_name
+
+
+def _setup_battery_tracking(labels: list, entities: list, devices: list, states: list):
+    _batt_label_map.clear()
+    _batt_entities.clear()
+
+    for label in labels:
+        name = label.get("name", "")
+        if name.startswith("Battery: "):
+            btype = name[len("Battery: "):]
+            if btype not in BATT_EXCLUDE_LABELS:
+                _batt_label_map[label["label_id"]] = btype
+    log.info(f"[BATT] labels: {_batt_label_map}")
+
+    device_batt_type: dict[str, str] = {}
+    for dev in devices:
+        for lid in dev.get("labels", []):
+            if lid in _batt_label_map:
+                device_batt_type[dev["id"]] = _batt_label_map[lid]
+                break
+
+    entity_device: dict[str, str] = {}
+    entity_labels: dict[str, list[str]] = {}
+    for ent in entities:
+        eid = ent.get("entity_id", "")
+        if ent.get("device_id"):
+            entity_device[eid] = ent["device_id"]
+        if ent.get("labels"):
+            entity_labels[eid] = ent["labels"]
+
+    state_map = {s["entity_id"]: s for s in states}
+
+    for ent in entities:
+        eid = ent.get("entity_id", "")
+        dc = ent.get("original_device_class") or ent.get("device_class", "")
+        if dc != "battery":
+            continue
+
+        btype = None
+        for lid in entity_labels.get(eid, []):
+            if lid in _batt_label_map:
+                btype = _batt_label_map[lid]
+                break
+        if not btype:
+            dev_id = entity_device.get(eid)
+            if dev_id:
+                btype = device_batt_type.get(dev_id)
+        if not btype:
+            continue
+
+        state = state_map.get(eid, {})
+        friendly = state.get("attributes", {}).get("friendly_name", eid)
+        name = _clean_battery_name(friendly)
+        try:
+            pct = int(round(float(state.get("state", 0))))
+        except (ValueError, TypeError):
+            pct = -1
+
+        _batt_entities[eid] = {"type": btype, "name": name, "pct": pct}
+
+    log.info(f"[BATT] tracking {len(_batt_entities)} battery entities:")
+    for eid, info in sorted(_batt_entities.items()):
+        log.info(f"[BATT]   {info['type']:10s} {info['pct']:4d}%  {info['name']}")
+
+    _write_battery_registers()
+
+
+def _update_battery_state(entity_id: str, new_state: dict):
+    if entity_id not in _batt_entities:
+        return
+    try:
+        pct = int(round(float(new_state.get("state", 0))))
+    except (ValueError, TypeError):
+        pct = -1
+    _batt_entities[entity_id]["pct"] = pct
+    friendly = new_state.get("attributes", {}).get("friendly_name")
+    if friendly:
+        _batt_entities[entity_id]["name"] = _clean_battery_name(friendly)
+    _write_battery_registers()
+
+
+def _write_battery_registers():
+    grouped: dict[str, list[dict]] = {t: [] for t in BATT_TYPES}
+    for info in _batt_entities.values():
+        if info["type"] in grouped and info["pct"] >= 0:
+            grouped[info["type"]].append(info)
+
+    for btype in BATT_TYPES:
+        devices = sorted(grouped[btype], key=lambda d: d["pct"])
+        base = BATT_TYPE_BASE[btype]
+        set_hr_int(base, len(devices))
+        for i in range(BATT_MAX_SLOTS):
+            slot_base = base + 1 + i * BATT_SLOT_REGS
+            if i < len(devices):
+                set_hr_string(slot_base, devices[i]["name"], BATT_NAME_CHARS)
+                set_hr_int(slot_base + BATT_NAME_REGS, devices[i]["pct"])
+            else:
+                set_hr_string(slot_base, "", BATT_NAME_CHARS)
+                set_hr_int(slot_base + BATT_NAME_REGS, 0)
+
+    total = sum(len(v) for v in grouped.values())
+    log.info(f"[BATT] updated registers: {total} devices across "
+             f"{sum(1 for v in grouped.values() if v)} types")
+
+
+# ---------------------------------------------------------------------------
+# HA WebSocket
 # ---------------------------------------------------------------------------
 def _extract_temp(state: dict) -> float | None:
     try:
@@ -453,23 +586,64 @@ async def ha_websocket(session: aiohttp.ClientSession):
                 get_states_id = msg_id
                 msg_id += 1
 
+                await ws.send_json({"id": msg_id, "type": "config/label_registry/list"})
+                labels_id = msg_id
+                msg_id += 1
+
+                await ws.send_json({"id": msg_id, "type": "config/entity_registry/list"})
+                entities_id = msg_id
+                msg_id += 1
+
+                await ws.send_json({"id": msg_id, "type": "config/device_registry/list"})
+                devices_id = msg_id
+                msg_id += 1
+
+                init_data: dict[str, list] = {}
+                batt_initialized = False
+
                 async for msg in ws:
                     if msg.type != aiohttp.WSMsgType.TEXT:
                         continue
                     data = json.loads(msg.data)
 
-                    if data.get("type") == "result" and data.get("id") == get_states_id:
-                        for state in data.get("result", []):
-                            eid = state["entity_id"]
-                            if eid in SENSOR_ENTITIES:
-                                set_hr(SENSOR_ENTITIES[eid], _extract_temp(state))
+                    if data.get("type") == "result":
+                        rid = data.get("id")
+                        result = data.get("result", [])
+
+                        if rid == get_states_id:
+                            for state in result:
+                                eid = state["entity_id"]
+                                if eid in SENSOR_ENTITIES:
+                                    set_hr(SENSOR_ENTITIES[eid], _extract_temp(state))
+                            init_data["states"] = result
+
+                        elif rid == labels_id:
+                            init_data["labels"] = result
+
+                        elif rid == entities_id:
+                            init_data["entities"] = result
+
+                        elif rid == devices_id:
+                            init_data["devices"] = result
+
+                        if (not batt_initialized
+                                and len(init_data) == 4):
+                            _setup_battery_tracking(
+                                init_data["labels"],
+                                init_data["entities"],
+                                init_data["devices"],
+                                init_data["states"],
+                            )
+                            batt_initialized = True
 
                     elif data.get("type") == "event":
                         ed  = data.get("event", {}).get("data", {})
                         eid = ed.get("entity_id", "")
+                        new_state = ed.get("new_state") or {}
                         if eid in SENSOR_ENTITIES:
-                            new_state = ed.get("new_state") or {}
                             set_hr(SENSOR_ENTITIES[eid], _extract_temp(new_state))
+                        if eid in _batt_entities:
+                            _update_battery_state(eid, new_state)
 
         except Exception as e:
             log.error(f"[WS] error: {e} — reconnecting in 10s")
