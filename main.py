@@ -101,6 +101,7 @@ BATT_SLOT_REGS  = BATT_NAME_REGS + BATT_AREA_REGS + BATT_TYPE_REGS + 1  # 25
 BATT_SLOTS      = 15
 BATT_BASE       = 200   # summary block: total, shown, under20, under50
 BATT_SLOT_BASE  = BATT_BASE + 10  # first slot starts at index 210
+BATT_DTYPE_BASE = 600            # 15 device-type codes, one per slot
 
 BATT_EXCLUDE_LABELS = {"Built-in", "Built-in (USB)"}
 
@@ -492,6 +493,7 @@ def _setup_battery_tracking(labels: list, entities: list, devices: list,
             entity_labels[eid] = ent["labels"]
 
     entity_reg = {ent["entity_id"]: ent for ent in entities if "entity_id" in ent}
+    state_map  = {s["entity_id"]: s for s in states}
 
     for state in states:
         eid = state["entity_id"]
@@ -525,7 +527,9 @@ def _setup_battery_tracking(labels: list, entities: list, devices: list,
         except (ValueError, TypeError):
             pct = 999
 
-        _batt_entities[eid] = {"type": btype, "name": name, "area": area, "pct": pct}
+        dtype_code = _detect_dtype(dev_id, entity_reg, state_map, name)
+        _batt_entities[eid] = {"type": btype, "name": name, "area": area, "pct": pct,
+                               "dtype_code": dtype_code}
 
     log.info(f"[BATT] tracking {len(_batt_entities)} battery entities:")
     for eid, info in sorted(_batt_entities.items()):
@@ -569,13 +573,92 @@ def _write_battery_registers():
             set_hr_string(sb + BATT_NAME_REGS,                            d["area"], BATT_AREA_CHARS)
             set_hr_string(sb + BATT_NAME_REGS + BATT_AREA_REGS,          d["type"], BATT_TYPE_CHARS)
             set_hr_int(   sb + BATT_NAME_REGS + BATT_AREA_REGS + BATT_TYPE_REGS, d["pct"])
+            set_hr_int(BATT_DTYPE_BASE + i, d.get("dtype_code", _DTYPE_DEVICE))
         else:
             set_hr_string(sb,                                              "", BATT_NAME_CHARS)
             set_hr_string(sb + BATT_NAME_REGS,                            "", BATT_AREA_CHARS)
             set_hr_string(sb + BATT_NAME_REGS + BATT_AREA_REGS,          "", BATT_TYPE_CHARS)
             set_hr_int(   sb + BATT_NAME_REGS + BATT_AREA_REGS + BATT_TYPE_REGS, 0)
+            set_hr_int(BATT_DTYPE_BASE + i, _DTYPE_DEVICE)
 
     log.info(f"[BATT] {total} devices, showing {shown}: under20={under20}, under50={under50}")
+
+
+
+# Device-type frame indices — must match imagePath order in MultistateImageWgt:
+# blind(0) button(1) device(2) motion(3) smoke(4) temp(5)
+# thermo(6) window(7) door(8) humidity(9) garage(10)
+_DTYPE_BLIND    = 0
+_DTYPE_BUTTON   = 1
+_DTYPE_DEVICE   = 2
+_DTYPE_MOTION   = 3
+_DTYPE_SMOKE    = 4
+_DTYPE_TEMP     = 5
+_DTYPE_THERMO   = 6
+_DTYPE_WINDOW   = 7
+_DTYPE_DOOR     = 8
+_DTYPE_HUMIDITY = 9
+_DTYPE_GARAGE   = 10
+
+
+def _detect_dtype(device_id: str | None, entity_reg: dict,
+                  state_map: dict, name: str) -> int:
+    """Return MultistateImageWgt frame index based on sibling entity device_class."""
+    if device_id:
+        cover = thermo = motion = smoke = temp = window = door = humidity = button = garage = 0
+        for eid, ent in entity_reg.items():
+            if ent.get("device_id") != device_id:
+                continue
+            domain = eid.split(".")[0]
+            dc = (ent.get("device_class") or ent.get("original_device_class")
+                  or state_map.get(eid, {}).get("attributes", {}).get("device_class") or "")
+            if domain == "cover":
+                if dc in ("garage", "garage_door"):
+                    garage += 1
+                else:
+                    cover += 1
+            elif domain == "climate":
+                thermo += 1
+            elif domain in ("button", "remote"):
+                button += 1
+            elif dc in ("motion", "occupancy"):
+                motion += 1
+            elif dc == "smoke":
+                smoke += 1
+            elif dc == "temperature":
+                temp += 1
+            elif dc == "window":
+                window += 1
+            elif dc in ("door",):
+                door += 1
+            elif dc == "garage_door":
+                garage += 1
+            elif dc in ("humidity", "moisture"):
+                humidity += 1
+        if cover:    return _DTYPE_BLIND
+        if thermo:   return _DTYPE_THERMO
+        if motion:   return _DTYPE_MOTION
+        if smoke:    return _DTYPE_SMOKE
+        if window:   return _DTYPE_WINDOW
+        if garage:   return _DTYPE_GARAGE
+        if door:     return _DTYPE_DOOR
+        if humidity: return _DTYPE_HUMIDITY
+        if temp:     return _DTYPE_TEMP
+        if button:   return _DTYPE_BUTTON
+
+    # Name-based fallback
+    n = name.lower()
+    if "blind" in n or "shutter" in n or "curtain" in n: return _DTYPE_BLIND
+    if "thermo" in n:                                     return _DTYPE_THERMO
+    if "motion" in n or "occupancy" in n:                return _DTYPE_MOTION
+    if "smoke" in n:                                      return _DTYPE_SMOKE
+    if "window" in n:                                     return _DTYPE_WINDOW
+    if "garage" in n:                                     return _DTYPE_GARAGE
+    if "door" in n:                                       return _DTYPE_DOOR
+    if "humidity" in n or "moisture" in n:               return _DTYPE_HUMIDITY
+    if "temp" in n or "temperature" in n:                return _DTYPE_TEMP
+    if "remote" in n or "button" in n or "switch" in n:  return _DTYPE_BUTTON
+    return _DTYPE_DEVICE
 
 
 # ---------------------------------------------------------------------------
