@@ -34,37 +34,13 @@ DISPLAY_TZ = ZoneInfo("Europe/Oslo")
 # ---------------------------------------------------------------------------
 # Holding register indices (1-based)
 # ---------------------------------------------------------------------------
-HR_OUTSIDE_TEMP    = 1
-HR_BATHROOM_TEMP   = 2
-HR_BEDROOM_TEMP    = 3
-HR_LIVINGROOM_TEMP = 4
-HR_GLASSHOUSE_TEMP = 5
 HR_HOUR            = 6
 HR_MINUTE          = 7
 HR_DAY             = 8
 HR_MONTH           = 9
-HR_YEAR            = 10
 HR_WEEKDAY         = 11  # 1=Mon, 7=Sun
-HR_WEATHER_CODE    = 12
-HR_WIND_SPEED      = 13
-HR_HUMIDITY        = 14
-HR_GARAGE_TEMP      = 15
-HR_ROOM6_TEMP      = 16
-# Daily summary (HR 17-31) — kept for backward compat with current page1 display
-HR_FC_DAY1_CODE    = 17
-HR_FC_DAY1_HIGH    = 18
-HR_FC_DAY1_LOW     = 19
-HR_FC_DAY1_PRECIP  = 20
-HR_FC_DAY1_WEEKDAY = 21
-HR_FC_DAY2_CODE    = 22
-HR_FC_DAY2_HIGH    = 23
-HR_FC_DAY2_LOW     = 24
-HR_FC_DAY2_PRECIP  = 25
+# Daily weekday registers (days 2-3 only, used by JMobile)
 HR_FC_DAY2_WEEKDAY = 26
-HR_FC_DAY3_CODE    = 27
-HR_FC_DAY3_HIGH    = 28
-HR_FC_DAY3_LOW     = 29
-HR_FC_DAY3_PRECIP  = 30
 HR_FC_DAY3_WEEKDAY = 31
 # 6-hour slot forecast (HR 32-67): 3 days × 4 slots × 3 values
 # Slots: S0=00-06, S1=06-12, S2=12-18, S3=18-24  (local time)
@@ -124,15 +100,6 @@ TEMP_LABEL_NAME = "Hallway panel: temperature"
 # Coil indices (1-based)
 COIL_ALL_LIGHTS_OFF = 1
 COIL_COMING_HOME    = 2
-
-# HA entities that map to holding registers (indoor temperature sensors only)
-SENSOR_ENTITIES = {
-    "sensor.bathroom_thermostat_air_temperature":    HR_BATHROOM_TEMP,
-    "sensor.bedroom_thermostat_air_temperature":     HR_BEDROOM_TEMP,
-    "sensor.living_room_thermostat_air_temperature": HR_LIVINGROOM_TEMP,
-    "sensor.glasshouse_temperature_temperature":     HR_GLASSHOUSE_TEMP,
-    "sensor.growing_tent_temperature_temperature":    HR_GARAGE_TEMP,
-}
 
 # HA scripts that map to coils
 SCRIPT_COILS = {
@@ -218,11 +185,7 @@ _SLOT_REGS = [
     ],
 ]
 
-_DAILY_REGS = [
-    (HR_FC_DAY1_CODE, HR_FC_DAY1_HIGH, HR_FC_DAY1_LOW, HR_FC_DAY1_PRECIP, HR_FC_DAY1_WEEKDAY),
-    (HR_FC_DAY2_CODE, HR_FC_DAY2_HIGH, HR_FC_DAY2_LOW, HR_FC_DAY2_PRECIP, HR_FC_DAY2_WEEKDAY),
-    (HR_FC_DAY3_CODE, HR_FC_DAY3_HIGH, HR_FC_DAY3_LOW, HR_FC_DAY3_PRECIP, HR_FC_DAY3_WEEKDAY),
-]
+_WEEKDAY_REGS = {1: HR_FC_DAY2_WEEKDAY, 2: HR_FC_DAY3_WEEKDAY}
 
 _SLOT_HOURS = [0, 6, 12, 18]
 
@@ -321,32 +284,15 @@ def _process_yr(data: dict):
     now_local = datetime.now(DISPLAY_TZ)
     now_utc   = datetime.now(timezone.utc).replace(minute=0, second=0, microsecond=0)
 
-    # Current conditions
-    if now_utc in ts_map:
-        entry = ts_map[now_utc]
-        d = entry["data"]["instant"]["details"]
-        set_hr(HR_OUTSIDE_TEMP, d.get("air_temperature"))
-        set_hr(HR_WIND_SPEED,   d.get("wind_speed"))  # yr.no already m/s
-        hum = d.get("relative_humidity")
-        if hum is not None:
-            set_hr_int(HR_HUMIDITY, int(round(hum)))
-        sym = (entry["data"].get("next_1_hours") or {}).get("summary", {}).get("symbol_code", "")
-        code = _yr_code(sym)
-        if code:
-            set_hr_int(HR_WEATHER_CODE, code)
-
     today_local = now_local.date()
 
-    for day_i, (slot_regs, daily_regs) in enumerate(zip(_SLOT_REGS, _DAILY_REGS)):
-        day_date  = today_local + timedelta(days=day_i)
-        code_r, high_r, low_r, precip_r, wd_r = daily_regs
+    for day_i, slot_regs in enumerate(_SLOT_REGS):
+        day_date = today_local + timedelta(days=day_i)
 
-        set_hr_int(wd_r, date(day_date.year, day_date.month, day_date.day).isoweekday())
-
-        temps: list[float] = []
-        precip_total = 0.0
-        noon_code  = 0
-        first_code = 0
+        # Write weekday for days 2-3 (still used by JMobile)
+        wd_reg = _WEEKDAY_REGS.get(day_i)
+        if wd_reg:
+            set_hr_int(wd_reg, date(day_date.year, day_date.month, day_date.day).isoweekday())
 
         for slot_i, (sc_r, st_r, sp_r) in enumerate(slot_regs):
             hour     = _SLOT_HOURS[slot_i]
@@ -385,23 +331,6 @@ def _process_yr(data: dict):
 
             precip = (n6.get("details") or n1.get("details") or {}).get("precipitation_amount")
             set_hr(sp_r, precip)
-
-            if temp is not None:
-                temps.append(float(temp))
-            if precip is not None:
-                precip_total += float(precip)
-            if code and not first_code:
-                first_code = code
-            if hour == 12 and code:
-                noon_code = code
-
-        day_code = noon_code or first_code
-        if day_code:
-            set_hr_int(code_r, day_code)
-        if temps:
-            set_hr(high_r, max(temps))
-            set_hr(low_r,  min(temps))
-        set_hr(precip_r, precip_total)
 
     for day_i2, slot_regs2 in enumerate(_SLOT_REGS):
         parts = []
@@ -777,13 +706,6 @@ def _detect_dtype(name: str) -> int:
 # ---------------------------------------------------------------------------
 # HA WebSocket
 # ---------------------------------------------------------------------------
-def _extract_temp(state: dict) -> float | None:
-    try:
-        return float(state["state"])
-    except (KeyError, ValueError, TypeError):
-        return None
-
-
 async def ha_websocket(session: aiohttp.ClientSession):
     ws_url = HA_URL.replace("http", "ws") + "/api/websocket"
     msg_id = 1
@@ -863,8 +785,6 @@ async def ha_websocket(session: aiohttp.ClientSession):
                             for state in result:
                                 eid = state["entity_id"]
                                 _state_map[eid] = state
-                                if eid in SENSOR_ENTITIES:
-                                    set_hr(SENSOR_ENTITIES[eid], _extract_temp(state))
                             init_data["states"] = result
 
                         elif rid == labels_id:
@@ -899,8 +819,6 @@ async def ha_websocket(session: aiohttp.ClientSession):
                             eid = ed.get("entity_id", "")
                             new_state = ed.get("new_state") or {}
                             _state_map[eid] = new_state
-                            if eid in SENSOR_ENTITIES:
-                                set_hr(SENSOR_ENTITIES[eid], _extract_temp(new_state))
                             if eid in _batt_entities:
                                 _update_battery_state(eid, new_state)
                             if eid in _temp_entities:
@@ -928,7 +846,6 @@ async def clock_updater():
         _hr_block.setValues(HR_MINUTE,  [now.minute])
         _hr_block.setValues(HR_DAY,     [now.day])
         _hr_block.setValues(HR_MONTH,   [now.month])
-        _hr_block.setValues(HR_YEAR,    [now.year])
         _hr_block.setValues(HR_WEEKDAY, [now.isoweekday()])
         slot = now.hour // 6
         s0 = 30 if slot > 0 else 100
