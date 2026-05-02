@@ -624,6 +624,7 @@ _DTYPE_GARAGE   = 10
 # ---------------------------------------------------------------------------
 _temp_label_id: str | None = None
 _temp_entities: dict[str, dict] = {}   # entity_id → {name, area, temp, icon_code}
+_state_map:     dict[str, dict] = {}   # entity_id → latest HA state dict
 
 _TICON_THERMO     = 0   # thermometer (fallback)
 _TICON_LIVING     = 1   # stue / living room
@@ -783,30 +784,57 @@ async def ha_websocket(session: aiohttp.ClientSession):
                 await ws.send_json({"id": msg_id, "type": "subscribe_events",
                                     "event_type": "state_changed"})
                 msg_id += 1
+                await ws.send_json({"id": msg_id, "type": "subscribe_events",
+                                    "event_type": "entity_registry_updated"})
+                msg_id += 1
+                await ws.send_json({"id": msg_id, "type": "subscribe_events",
+                                    "event_type": "label_registry_updated"})
+                msg_id += 1
 
                 await ws.send_json({"id": msg_id, "type": "get_states"})
-                get_states_id = msg_id
-                msg_id += 1
+                get_states_id = msg_id; msg_id += 1
 
                 await ws.send_json({"id": msg_id, "type": "config/label_registry/list"})
-                labels_id = msg_id
-                msg_id += 1
+                labels_id = msg_id; msg_id += 1
 
                 await ws.send_json({"id": msg_id, "type": "config/entity_registry/list"})
-                entities_id = msg_id
-                msg_id += 1
+                entities_id = msg_id; msg_id += 1
 
                 await ws.send_json({"id": msg_id, "type": "config/device_registry/list"})
-                devices_id = msg_id
-                msg_id += 1
+                devices_id = msg_id; msg_id += 1
 
                 await ws.send_json({"id": msg_id, "type": "config/area_registry/list"})
-                areas_id = msg_id
-                msg_id += 1
+                areas_id = msg_id; msg_id += 1
 
                 init_data: dict[str, list] = {}
                 batt_initialized = False
                 temp_initialized = False
+
+                reinit_pending: dict[int, str] = {}  # msg_id → registry key
+                reinit_buf:     dict[str, list] = {}
+                reinit_task:    asyncio.Task | None = None
+
+                def _run_setup(labels, entities, devices, areas):
+                    _setup_battery_tracking(labels, entities, devices, areas,
+                                            list(_state_map.values()))
+                    _setup_temp_tracking(labels, entities, devices, areas,
+                                         list(_state_map.values()))
+
+                async def _do_reinit():
+                    nonlocal msg_id
+                    await asyncio.sleep(1.0)  # debounce — absorb rapid successive events
+                    reinit_buf.clear()
+                    reinit_pending.clear()
+                    for key, rtype in [
+                        ("labels",   "config/label_registry/list"),
+                        ("entities", "config/entity_registry/list"),
+                        ("devices",  "config/device_registry/list"),
+                        ("areas",    "config/area_registry/list"),
+                    ]:
+                        await ws.send_json({"id": msg_id, "type": rtype})
+                        reinit_pending[msg_id] = key
+                        msg_id += 1
+                    log.info("[WS] registry changed — re-fetching registry data")
 
                 async for msg in ws:
                     if msg.type != aiohttp.WSMsgType.TEXT:
@@ -820,52 +848,56 @@ async def ha_websocket(session: aiohttp.ClientSession):
                         if rid == get_states_id:
                             for state in result:
                                 eid = state["entity_id"]
+                                _state_map[eid] = state
                                 if eid in SENSOR_ENTITIES:
                                     set_hr(SENSOR_ENTITIES[eid], _extract_temp(state))
                             init_data["states"] = result
 
                         elif rid == labels_id:
                             init_data["labels"] = result
-
                         elif rid == entities_id:
                             init_data["entities"] = result
-
                         elif rid == devices_id:
                             init_data["devices"] = result
-
                         elif rid == areas_id:
                             init_data["areas"] = result
 
+                        elif rid in reinit_pending:
+                            reinit_buf[reinit_pending[rid]] = result
+                            if len(reinit_buf) == 4:
+                                log.info("[WS] registry re-fetch complete — re-initializing")
+                                _run_setup(reinit_buf["labels"], reinit_buf["entities"],
+                                           reinit_buf["devices"], reinit_buf["areas"])
+
                         if len(init_data) == 5:
                             if not batt_initialized:
-                                _setup_battery_tracking(
-                                    init_data["labels"],
-                                    init_data["entities"],
-                                    init_data["devices"],
-                                    init_data["areas"],
-                                    init_data["states"],
-                                )
+                                _run_setup(init_data["labels"], init_data["entities"],
+                                           init_data["devices"], init_data["areas"])
                                 batt_initialized = True
-                            if not temp_initialized:
-                                _setup_temp_tracking(
-                                    init_data["labels"],
-                                    init_data["entities"],
-                                    init_data["devices"],
-                                    init_data["areas"],
-                                    init_data["states"],
-                                )
                                 temp_initialized = True
 
                     elif data.get("type") == "event":
-                        ed  = data.get("event", {}).get("data", {})
-                        eid = ed.get("entity_id", "")
-                        new_state = ed.get("new_state") or {}
-                        if eid in SENSOR_ENTITIES:
-                            set_hr(SENSOR_ENTITIES[eid], _extract_temp(new_state))
-                        if eid in _batt_entities:
-                            _update_battery_state(eid, new_state)
-                        if eid in _temp_entities:
-                            _update_temp_state(eid, new_state)
+                        event = data.get("event", {})
+                        event_type = event.get("event_type", "")
+                        ed = event.get("data", {})
+
+                        if event_type == "state_changed":
+                            eid = ed.get("entity_id", "")
+                            new_state = ed.get("new_state") or {}
+                            _state_map[eid] = new_state
+                            if eid in SENSOR_ENTITIES:
+                                set_hr(SENSOR_ENTITIES[eid], _extract_temp(new_state))
+                            if eid in _batt_entities:
+                                _update_battery_state(eid, new_state)
+                            if eid in _temp_entities:
+                                _update_temp_state(eid, new_state)
+
+                        elif event_type in ("entity_registry_updated",
+                                            "label_registry_updated"):
+                            if reinit_task and not reinit_task.done():
+                                reinit_task.cancel()
+                            reinit_task = asyncio.create_task(_do_reinit())
+                            log.info(f"[WS] {event_type} — reinit scheduled")
 
         except Exception as e:
             log.error(f"[WS] error: {e} — reconnecting in 10s")
