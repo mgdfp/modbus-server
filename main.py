@@ -527,7 +527,7 @@ def _setup_battery_tracking(labels: list, entities: list, devices: list,
         except (ValueError, TypeError):
             pct = 999
 
-        dtype_code = _detect_dtype(dev_id, entity_reg, state_map, name)
+        dtype_code = _detect_dtype(name)
         _batt_entities[eid] = {"type": btype, "name": name, "area": area, "pct": pct,
                                "dtype_code": dtype_code}
 
@@ -601,52 +601,8 @@ _DTYPE_HUMIDITY = 9
 _DTYPE_GARAGE   = 10
 
 
-def _detect_dtype(device_id: str | None, entity_reg: dict,
-                  state_map: dict, name: str) -> int:
-    """Return MultistateImageWgt frame index based on sibling entity device_class."""
-    if device_id:
-        cover = thermo = motion = smoke = temp = window = door = humidity = button = garage = 0
-        for eid, ent in entity_reg.items():
-            if ent.get("device_id") != device_id:
-                continue
-            domain = eid.split(".")[0]
-            dc = (ent.get("device_class") or ent.get("original_device_class")
-                  or state_map.get(eid, {}).get("attributes", {}).get("device_class") or "")
-            if domain == "cover":
-                if dc in ("garage", "garage_door"):
-                    garage += 1
-                else:
-                    cover += 1
-            elif domain == "climate":
-                thermo += 1
-            elif domain in ("button", "remote"):
-                button += 1
-            elif dc in ("motion", "occupancy"):
-                motion += 1
-            elif dc == "smoke":
-                smoke += 1
-            elif dc == "temperature":
-                temp += 1
-            elif dc == "window":
-                window += 1
-            elif dc in ("door",):
-                door += 1
-            elif dc == "garage_door":
-                garage += 1
-            elif dc in ("humidity", "moisture"):
-                humidity += 1
-        if cover:    return _DTYPE_BLIND
-        if thermo:   return _DTYPE_THERMO
-        if motion:   return _DTYPE_MOTION
-        if smoke:    return _DTYPE_SMOKE
-        if window:   return _DTYPE_WINDOW
-        if garage:   return _DTYPE_GARAGE
-        if door:     return _DTYPE_DOOR
-        if humidity: return _DTYPE_HUMIDITY
-        if temp:     return _DTYPE_TEMP
-        if button:   return _DTYPE_BUTTON
-
-    # Name-based fallback
+def _detect_dtype(name: str) -> int:
+    """Return MultistateImageWgt frame index from device name keywords."""
     n = name.lower()
     if "blind" in n or "shutter" in n or "curtain" in n: return _DTYPE_BLIND
     if "thermo" in n:                                     return _DTYPE_THERMO
