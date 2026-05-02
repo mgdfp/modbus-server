@@ -105,6 +105,22 @@ BATT_DTYPE_BASE = 600            # 15 device-type codes, one per slot
 
 BATT_EXCLUDE_LABELS = {"Built-in", "Built-in (USB)"}
 
+# ---------------------------------------------------------------------------
+# Temperature register layout  (12 slots, sorted by area then name)
+# ---------------------------------------------------------------------------
+# index 700-701: summary (total, shown)
+# index 710 + n*9: slot n — area(8 regs) + temp(1 reg, value×10, 9999=unavail)
+# index 820 + n:   icon code per slot
+TEMP_AREA_CHARS = 16
+TEMP_AREA_REGS  = TEMP_AREA_CHARS // 2   # 8
+TEMP_SLOT_REGS  = TEMP_AREA_REGS + 1    # 9
+TEMP_SLOTS      = 12
+TEMP_BASE       = 700
+TEMP_SLOT_BASE  = TEMP_BASE + 10        # 710
+TEMP_ICON_BASE  = 820
+
+TEMP_LABEL_NAME = "Hallway panel: temperature"
+
 # Coil indices (1-based)
 COIL_ALL_LIGHTS_OFF = 1
 COIL_COMING_HOME    = 2
@@ -603,6 +619,130 @@ _DTYPE_HUMIDITY = 9
 _DTYPE_GARAGE   = 10
 
 
+# ---------------------------------------------------------------------------
+# Temperature tracking
+# ---------------------------------------------------------------------------
+_temp_label_id: str | None = None
+_temp_entities: dict[str, dict] = {}   # entity_id → {name, area, temp, icon_code}
+
+_TICON_THERMO     = 0   # thermometer (fallback)
+_TICON_LIVING     = 1   # stue / living room
+_TICON_BEDROOM    = 2   # soverom / bedroom
+_TICON_BATHROOM   = 3   # bad / bathroom
+_TICON_KITCHEN    = 4   # kjøkken / kitchen
+_TICON_GLASSHOUSE = 5   # vinterhage / glasshouse
+_TICON_SAUNA      = 6   # sauna / badstue
+_TICON_GARAGE     = 7   # garasje / garage
+_TICON_OUTDOOR    = 8   # ute / outdoor
+
+
+def _detect_ticon(area: str) -> int:
+    a = area.lower()
+    if "ute" == a or "outside" in a or "outdoor" in a or "utendørs" in a: return _TICON_OUTDOOR
+    if "stue" in a or "living" in a:                                       return _TICON_LIVING
+    if "soverom" in a or "bedroom" in a:                                   return _TICON_BEDROOM
+    if "bad" in a or "bathroom" in a:                                      return _TICON_BATHROOM
+    if "kjøkken" in a or "kitchen" in a:                                   return _TICON_KITCHEN
+    if "vinterhage" in a or "glasshouse" in a or "greenhouse" in a:        return _TICON_GLASSHOUSE
+    if "sauna" in a or "badstue" in a:                                     return _TICON_SAUNA
+    if "garasje" in a or "garage" in a:                                    return _TICON_GARAGE
+    return _TICON_THERMO
+
+
+def _setup_temp_tracking(labels: list, entities: list, devices: list,
+                         areas: list, states: list):
+    global _temp_label_id
+    _temp_entities.clear()
+
+    for label in labels:
+        if label.get("name") == TEMP_LABEL_NAME:
+            _temp_label_id = label["label_id"]
+            break
+    if not _temp_label_id:
+        log.info(f"[TEMP] label '{TEMP_LABEL_NAME}' not found — no temp sensors tracked")
+        return
+
+    area_names: dict[str, str] = {a["area_id"]: a.get("name", "") for a in areas}
+
+    device_area: dict[str, str] = {}
+    for dev in devices:
+        aid = dev.get("area_id")
+        if aid and aid in area_names:
+            device_area[dev["id"]] = area_names[aid]
+
+    entity_area: dict[str, str] = {}
+    entity_device: dict[str, str] = {}
+    for ent in entities:
+        eid = ent.get("entity_id", "")
+        if ent.get("device_id"):
+            entity_device[eid] = ent["device_id"]
+        aid = ent.get("area_id")
+        if aid and aid in area_names:
+            entity_area[eid] = area_names[aid]
+        elif _temp_label_id in ent.get("labels", []):
+            dev_id = ent.get("device_id")
+            if dev_id and dev_id in device_area:
+                entity_area[eid] = device_area[dev_id]
+
+    state_map = {s["entity_id"]: s for s in states}
+
+    for ent in entities:
+        eid = ent.get("entity_id", "")
+        if _temp_label_id not in ent.get("labels", []):
+            continue
+        state = state_map.get(eid, {})
+        friendly = state.get("attributes", {}).get("friendly_name", eid)
+        area = entity_area.get(eid, "")
+        try:
+            temp = int(round(float(state.get("state", "")) * 10))
+        except (ValueError, TypeError):
+            temp = 9999
+        icon_code = _detect_ticon(area)
+        _temp_entities[eid] = {"name": friendly, "area": area, "temp": temp,
+                               "icon_code": icon_code}
+
+    log.info(f"[TEMP] tracking {len(_temp_entities)} sensors:")
+    for eid, info in sorted(_temp_entities.items(), key=lambda x: (x[1]["area"], x[1]["name"])):
+        log.info(f"[TEMP]   {info['area']:20s}  {info['temp']/10:.1f}°C  {info['name']}")
+
+    _write_temp_registers()
+
+
+def _update_temp_state(entity_id: str, new_state: dict):
+    if entity_id not in _temp_entities:
+        return
+    try:
+        temp = int(round(float(new_state.get("state", "")) * 10))
+    except (ValueError, TypeError):
+        temp = 9999
+    _temp_entities[entity_id]["temp"] = temp
+    _write_temp_registers()
+
+
+def _write_temp_registers():
+    all_sensors = sorted(
+        _temp_entities.items(),
+        key=lambda x: (x[1]["area"].lower(), x[1]["name"].lower()),
+    )
+    total = len(all_sensors)
+    shown = min(TEMP_SLOTS, total)
+    _hr_block.setValues(TEMP_BASE, [total, shown])
+
+    for i in range(TEMP_SLOTS):
+        sb = TEMP_SLOT_BASE + i * TEMP_SLOT_REGS
+        if i < len(all_sensors):
+            _, d = all_sensors[i]
+            set_hr_string(sb, d["area"], TEMP_AREA_CHARS)
+            set_hr_int(sb + TEMP_AREA_REGS, d["temp"])
+            set_hr_int(TEMP_ICON_BASE + i, d["icon_code"])
+        else:
+            set_hr_string(sb, "", TEMP_AREA_CHARS)
+            set_hr_int(sb + TEMP_AREA_REGS, 0)
+            set_hr_int(TEMP_ICON_BASE + i, _TICON_THERMO)
+
+    log.info(f"[TEMP] {total} sensors, showing {shown}")
+
+
 def _detect_dtype(name: str) -> int:
     """Return MultistateImageWgt frame index from device name keywords."""
     n = name.lower()
@@ -666,6 +806,7 @@ async def ha_websocket(session: aiohttp.ClientSession):
 
                 init_data: dict[str, list] = {}
                 batt_initialized = False
+                temp_initialized = False
 
                 async for msg in ws:
                     if msg.type != aiohttp.WSMsgType.TEXT:
@@ -695,16 +836,25 @@ async def ha_websocket(session: aiohttp.ClientSession):
                         elif rid == areas_id:
                             init_data["areas"] = result
 
-                        if (not batt_initialized
-                                and len(init_data) == 5):
-                            _setup_battery_tracking(
-                                init_data["labels"],
-                                init_data["entities"],
-                                init_data["devices"],
-                                init_data["areas"],
-                                init_data["states"],
-                            )
-                            batt_initialized = True
+                        if len(init_data) == 5:
+                            if not batt_initialized:
+                                _setup_battery_tracking(
+                                    init_data["labels"],
+                                    init_data["entities"],
+                                    init_data["devices"],
+                                    init_data["areas"],
+                                    init_data["states"],
+                                )
+                                batt_initialized = True
+                            if not temp_initialized:
+                                _setup_temp_tracking(
+                                    init_data["labels"],
+                                    init_data["entities"],
+                                    init_data["devices"],
+                                    init_data["areas"],
+                                    init_data["states"],
+                                )
+                                temp_initialized = True
 
                     elif data.get("type") == "event":
                         ed  = data.get("event", {}).get("data", {})
@@ -714,6 +864,8 @@ async def ha_websocket(session: aiohttp.ClientSession):
                             set_hr(SENSOR_ENTITIES[eid], _extract_temp(new_state))
                         if eid in _batt_entities:
                             _update_battery_state(eid, new_state)
+                        if eid in _temp_entities:
+                            _update_temp_state(eid, new_state)
 
         except Exception as e:
             log.error(f"[WS] error: {e} — reconnecting in 10s")
