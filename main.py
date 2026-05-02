@@ -505,6 +505,8 @@ def _setup_battery_tracking(labels: list, entities: list, devices: list,
             continue
 
         ent = entity_reg.get(eid, {})
+        if ent.get("platform") == "mobile_app":
+            continue
         btype = None
         for lid in entity_labels.get(eid, []):
             if lid in _batt_label_map:
