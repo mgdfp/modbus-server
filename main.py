@@ -626,27 +626,41 @@ _temp_label_id: str | None = None
 _temp_entities: dict[str, dict] = {}   # entity_id → {name, area, temp, icon_code}
 _state_map:     dict[str, dict] = {}   # entity_id → latest HA state dict
 
-_TICON_THERMO     = 0   # thermometer (fallback)
-_TICON_LIVING     = 1   # stue / living room
-_TICON_BEDROOM    = 2   # soverom / bedroom
-_TICON_BATHROOM   = 3   # bad / bathroom
-_TICON_KITCHEN    = 4   # kjøkken / kitchen
-_TICON_GLASSHOUSE = 5   # vinterhage / glasshouse
-_TICON_SAUNA      = 6   # sauna / badstue
-_TICON_GARAGE     = 7   # garasje / garage
-_TICON_OUTDOOR    = 8   # ute / outdoor
+_TICON_THERMO     = 0   # icon_thermometer.svg  — fallback
+_TICON_LIVING     = 1   # icon_sofa.svg         — stue / living room
+_TICON_BEDROOM    = 2   # icon_bed.svg          — soverom / bedroom
+_TICON_BATHROOM   = 3   # icon_shower.svg       — bad / bathroom
+_TICON_GLASSHOUSE = 4   # icon_glasshouse.svg   — vinterhage / glasshouse
+_TICON_SAUNA      = 5   # icon_flame.svg        — sauna / badstue
+_TICON_TEKNISK    = 6   # icon_room_teknisk.svg — teknisk rom / utility room
+_TICON_KITCHEN    = 7   # icon_room_kitchen.svg — kjøkken / kitchen
+_TICON_STAIRS     = 8   # icon_room_stairs.svg  — trapp / staircase
+_TICON_TOILET     = 9   # icon_room_toilet.svg  — toalett / toilet
+_TICON_LOFT       = 10  # icon_room_loft.svg    — hems / loft
+_TICON_HALL       = 11  # icon_room_hall.svg    — hall / hallway
+_TICON_GARAGE     = 12  # icon_room_garasje.svg — garasje / garage
+_TICON_CORRIDOR   = 13  # icon_room_corridor.svg — korridor / corridor
+_TICON_OUTDOOR    = 14  # icon_room_outdoor.svg — utomhus / outdoor
+_TICON_CANNABIS   = 15  # icon_cannabis.svg     — cannabisplante
 
 
 def _detect_ticon(area: str) -> int:
     a = area.lower()
-    if "ute" == a or "outside" in a or "outdoor" in a or "utendørs" in a: return _TICON_OUTDOOR
+    if "utomhus" in a or "utendørs" in a or "outside" in a or "outdoor" in a or a == "ute": return _TICON_OUTDOOR
     if "stue" in a or "living" in a:                                       return _TICON_LIVING
     if "soverom" in a or "bedroom" in a:                                   return _TICON_BEDROOM
-    if "bad" in a or "bathroom" in a:                                      return _TICON_BATHROOM
-    if "kjøkken" in a or "kitchen" in a:                                   return _TICON_KITCHEN
     if "vinterhage" in a or "glasshouse" in a or "greenhouse" in a:        return _TICON_GLASSHOUSE
     if "sauna" in a or "badstue" in a:                                     return _TICON_SAUNA
+    if "teknisk" in a or "utility" in a or "technical" in a:               return _TICON_TEKNISK
+    if "kjøkken" in a or "kitchen" in a:                                   return _TICON_KITCHEN
+    if "trapp" in a or "stair" in a:                                       return _TICON_STAIRS
+    if "toalett" in a or "toilet" in a or "wc" in a:                      return _TICON_TOILET
+    if "hems" in a or "loft" in a or "attic" in a:                        return _TICON_LOFT
+    if "korridor" in a or "corridor" in a or "hallway" in a:              return _TICON_CORRIDOR
+    if "hall" in a:                                                         return _TICON_HALL
     if "garasje" in a or "garage" in a:                                    return _TICON_GARAGE
+    if "cannabis" in a or "grow" in a:                                     return _TICON_CANNABIS
+    if "bad" in a or "bathroom" in a:                                      return _TICON_BATHROOM
     return _TICON_THERMO
 
 
