@@ -753,7 +753,7 @@ def _write_temp_registers():
         else:
             set_hr_string(sb, "", TEMP_AREA_CHARS)
             set_hr_int(sb + TEMP_AREA_REGS, 0)
-            set_hr_int(TEMP_ICON_BASE + i, _TICON_THERMO)
+            set_hr_int(TEMP_ICON_BASE + i, 999)
 
     log.info(f"[TEMP] {total} sensors, showing {shown}")
 
