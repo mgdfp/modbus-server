@@ -31,6 +31,9 @@ YR_URL = f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={YR_LA
 YR_HEADERS = {"User-Agent": "home-modbus-bridge/1.0"}
 DISPLAY_TZ = ZoneInfo("Europe/Oslo")
 
+UNIFI_URL     = os.environ.get("UNIFI_URL", "").rstrip("/")
+UNIFI_API_KEY = os.environ.get("UNIFI_API_KEY", "")
+
 # ---------------------------------------------------------------------------
 # Holding register indices (1-based)
 # ---------------------------------------------------------------------------
@@ -61,6 +64,12 @@ HR_SLOT0_OPACITY = 68
 HR_SLOT1_OPACITY = 69
 HR_SLOT2_OPACITY = 70
 HR_IS_SUMMERTIME = 71
+# System / connection status
+HR_WAN_STATUS          = 72   # 0=Unknown 1=OK 2=Degraded 3=Down
+HR_WAN_FAULT_COUNT     = 73   # WAN fault events in last 24h (capped at 99)
+HR_WAN_LAST_FAULT_MINS = 74   # minutes since last fault (9999=none recent)
+HR_HA_WS_STATUS        = 75   # 0=disconnected 1=connected
+HR_HA_EVENT_AGE        = 76   # seconds since last HA state_changed (65535=never)
 
 # ---------------------------------------------------------------------------
 # Battery register layout  (flat list, sorted by pct ascending, offline first)
@@ -704,15 +713,23 @@ def _detect_dtype(name: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# HA connection state  (written by ha_websocket, read by status_updater)
+# ---------------------------------------------------------------------------
+_ha_ws_connected:    bool            = False
+_ha_last_event_time: datetime | None = None
+
+# ---------------------------------------------------------------------------
 # HA WebSocket
 # ---------------------------------------------------------------------------
 async def ha_websocket(session: aiohttp.ClientSession):
+    global _ha_ws_connected, _ha_last_event_time
     ws_url = HA_URL.replace("http", "ws") + "/api/websocket"
     msg_id = 1
 
     while True:
         try:
             async with session.ws_connect(ws_url) as ws:
+                _ha_ws_connected = True
                 log.info("[WS] connected to Home Assistant")
 
                 await ws.send_json({"type": "auth", "access_token": HA_TOKEN})
@@ -819,6 +836,7 @@ async def ha_websocket(session: aiohttp.ClientSession):
                             eid = ed.get("entity_id", "")
                             new_state = ed.get("new_state") or {}
                             _state_map[eid] = new_state
+                            _ha_last_event_time = datetime.now(timezone.utc)
                             if eid in _batt_entities:
                                 _update_battery_state(eid, new_state)
                             if eid in _temp_entities:
@@ -831,9 +849,94 @@ async def ha_websocket(session: aiohttp.ClientSession):
                             reinit_task = asyncio.create_task(_do_reinit())
                             log.info(f"[WS] {event_type} — reinit scheduled")
 
+            _ha_ws_connected = False
         except Exception as e:
+            _ha_ws_connected = False
             log.error(f"[WS] error: {e} — reconnecting in 10s")
             await asyncio.sleep(10)
+
+
+# ---------------------------------------------------------------------------
+# UniFi WAN monitoring
+# ---------------------------------------------------------------------------
+_WAN_FAULT_KEYS = ("Disconnected", "PaketLoss", "PacketLoss", "HighLatency",
+                   "LimitedConn", "MultiDisconnect")
+
+
+async def _poll_unifi(session: aiohttp.ClientSession):
+    base = f"{UNIFI_URL}/proxy/network/api/s/default"
+
+    async with session.get(f"{base}/stat/health") as resp:
+        if resp.status != 200:
+            log.warning(f"[UNIFI] health HTTP {resp.status}")
+            set_hr_int(HR_WAN_STATUS, 0)
+        else:
+            payload = await resp.json(content_type=None)
+            wan = next((s for s in payload.get("data", []) if s.get("subsystem") == "wan"), None)
+            if wan:
+                s = wan.get("status", "")
+                code = 1 if s == "ok" else 2 if s == "warning" else 3 if s in ("error", "disconnected") else 0
+                set_hr_int(HR_WAN_STATUS, code)
+                log.info(f"[UNIFI] WAN status={s} → {code}")
+
+    async with session.get(f"{base}/stat/event?within=24") as resp:
+        if resp.status != 200:
+            log.warning(f"[UNIFI] events HTTP {resp.status}")
+            return
+        payload = await resp.json(content_type=None)
+        now = datetime.now(timezone.utc)
+        cutoff = now - timedelta(hours=24)
+        faults = []
+        for ev in payload.get("data", []):
+            if ev.get("subsystem") != "wan":
+                continue
+            if not any(k in ev.get("key", "") for k in _WAN_FAULT_KEYS):
+                continue
+            try:
+                dt = datetime.fromisoformat(ev["datetime"].replace("Z", "+00:00"))
+            except (KeyError, ValueError):
+                continue
+            if dt >= cutoff:
+                faults.append(dt)
+
+        set_hr_int(HR_WAN_FAULT_COUNT, min(len(faults), 99))
+        if faults:
+            age_mins = int((now - max(faults)).total_seconds() / 60)
+            set_hr_int(HR_WAN_LAST_FAULT_MINS, min(age_mins, 9998))
+            log.info(f"[UNIFI] WAN faults 24h={len(faults)}, last={age_mins}min ago")
+        else:
+            set_hr_int(HR_WAN_LAST_FAULT_MINS, 9999)
+            log.info("[UNIFI] WAN faults 24h=0")
+
+
+async def unifi_poller():
+    if not UNIFI_URL or not UNIFI_API_KEY:
+        log.info("[UNIFI] UNIFI_URL/UNIFI_API_KEY not set — WAN monitoring disabled")
+        return
+    headers = {"X-API-KEY": UNIFI_API_KEY, "Accept": "application/json"}
+    connector = aiohttp.TCPConnector(ssl=False)
+    async with aiohttp.ClientSession(headers=headers, connector=connector) as session:
+        while True:
+            try:
+                await _poll_unifi(session)
+            except Exception as e:
+                log.error(f"[UNIFI] {e}")
+                set_hr_int(HR_WAN_STATUS, 0)
+            await asyncio.sleep(60)
+
+
+# ---------------------------------------------------------------------------
+# HA / system status registers — updated every 5 s
+# ---------------------------------------------------------------------------
+async def status_updater():
+    while True:
+        set_hr_int(HR_HA_WS_STATUS, 1 if _ha_ws_connected else 0)
+        if _ha_last_event_time is not None:
+            age = int((datetime.now(timezone.utc) - _ha_last_event_time).total_seconds())
+            set_hr_int(HR_HA_EVENT_AGE, min(age, 65535))
+        else:
+            set_hr_int(HR_HA_EVENT_AGE, 65535)
+        await asyncio.sleep(5)
 
 
 # ---------------------------------------------------------------------------
@@ -881,6 +984,8 @@ async def run():
             tg.create_task(watch_coils())
             tg.create_task(clock_updater())
             tg.create_task(yr_poller())
+            tg.create_task(unifi_poller())
+            tg.create_task(status_updater())
 
 
 if __name__ == "__main__":
