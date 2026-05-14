@@ -66,8 +66,8 @@ HR_SLOT2_OPACITY = 70
 HR_IS_SUMMERTIME = 71
 # System / connection status
 HR_WAN_STATUS          = 72   # 0=Unknown 1=OK 2=Degraded 3=Down
-HR_WAN_FAULT_COUNT     = 73   # WAN fault events in last 24h (capped at 99)
-HR_WAN_LAST_FAULT_MINS = 74   # minutes since last fault (9999=none recent)
+HR_WAN_FAULT_COUNT     = 73   # 24h average WAN latency in ms
+HR_WAN_LAST_FAULT_MINS = 74   # minutes since last WAN reconnection (9999=over 7 days)
 HR_HA_WS_STATUS        = 75   # 0=disconnected 1=connected
 HR_HA_EVENT_AGE        = 76   # seconds since last HA state_changed (65535=never)
 
@@ -859,10 +859,6 @@ async def ha_websocket(session: aiohttp.ClientSession):
 # ---------------------------------------------------------------------------
 # UniFi WAN monitoring
 # ---------------------------------------------------------------------------
-_WAN_FAULT_KEYS = ("Disconnected", "PaketLoss", "PacketLoss", "HighLatency",
-                   "LimitedConn", "MultiDisconnect")
-
-
 async def _poll_unifi(session: aiohttp.ClientSession):
     base = f"{UNIFI_URL}/proxy/network/api/s/default"
 
@@ -870,43 +866,25 @@ async def _poll_unifi(session: aiohttp.ClientSession):
         if resp.status != 200:
             log.warning(f"[UNIFI] health HTTP {resp.status}")
             set_hr_int(HR_WAN_STATUS, 0)
-        else:
-            payload = await resp.json(content_type=None)
-            wan = next((s for s in payload.get("data", []) if s.get("subsystem") == "wan"), None)
-            if wan:
-                s = wan.get("status", "")
-                code = 1 if s == "ok" else 2 if s == "warning" else 3 if s in ("error", "disconnected") else 0
-                set_hr_int(HR_WAN_STATUS, code)
-                log.info(f"[UNIFI] WAN status={s} → {code}")
-
-    async with session.get(f"{base}/stat/event?_limit=1000") as resp:
-        if resp.status != 200:
-            log.warning(f"[UNIFI] events HTTP {resp.status}")
             return
         payload = await resp.json(content_type=None)
-        now = datetime.now(timezone.utc)
-        cutoff = now - timedelta(hours=24)
-        faults = []
-        for ev in payload.get("data", []):
-            if ev.get("subsystem") != "wan":
-                continue
-            if not any(k in ev.get("key", "") for k in _WAN_FAULT_KEYS):
-                continue
-            try:
-                dt = datetime.fromisoformat(ev["datetime"].replace("Z", "+00:00"))
-            except (KeyError, ValueError):
-                continue
-            if dt >= cutoff:
-                faults.append(dt)
+        wan = next((s for s in payload.get("data", []) if s.get("subsystem") == "wan"), None)
+        if not wan:
+            set_hr_int(HR_WAN_STATUS, 0)
+            return
 
-        set_hr_int(HR_WAN_FAULT_COUNT, min(len(faults), 99))
-        if faults:
-            age_mins = int((now - max(faults)).total_seconds() / 60)
-            set_hr_int(HR_WAN_LAST_FAULT_MINS, min(age_mins, 9998))
-            log.info(f"[UNIFI] WAN faults 24h={len(faults)}, last={age_mins}min ago")
-        else:
-            set_hr_int(HR_WAN_LAST_FAULT_MINS, 9999)
-            log.info("[UNIFI] WAN faults 24h=0")
+        s = wan.get("status", "")
+        code = 1 if s == "ok" else 2 if s == "warning" else 3 if s in ("error", "disconnected") else 0
+        set_hr_int(HR_WAN_STATUS, code)
+
+        wan_stats = wan.get("uptime_stats", {}).get("WAN", {})
+        latency = int(round(wan_stats.get("latency_average", 0)))
+        set_hr_int(HR_WAN_FAULT_COUNT, latency)
+
+        uptime_mins = min(int(wan_stats.get("uptime", 0)) // 60, 9999)
+        set_hr_int(HR_WAN_LAST_FAULT_MINS, uptime_mins)
+
+        log.info(f"[UNIFI] WAN status={s}→{code}, latency_avg={latency}ms, uptime={uptime_mins}min")
 
 
 async def unifi_poller():
