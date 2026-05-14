@@ -11,6 +11,10 @@ from zoneinfo import ZoneInfo
 import aiohttp
 from dotenv import load_dotenv
 from pymodbus import __version__ as pymodbus_version
+from pysnmp.hlapi.v3arch.asyncio import (
+    CommunityData, ContextData, ObjectIdentity, ObjectType,
+    SnmpEngine, UdpTransportTarget, get_cmd,
+)
 from pymodbus.datastore import (
     ModbusSequentialDataBlock,
     ModbusServerContext,
@@ -33,6 +37,11 @@ DISPLAY_TZ = ZoneInfo("Europe/Oslo")
 
 UNIFI_URL     = os.environ.get("UNIFI_URL", "").rstrip("/")
 UNIFI_API_KEY = os.environ.get("UNIFI_API_KEY", "")
+
+WTI_URL  = os.environ.get("WTI_URL", "").rstrip("/")
+WTI_USER = os.environ.get("WTI_USER", "")
+WTI_PASS = os.environ.get("WTI_PASS", "")
+_WTI_HOST = WTI_URL.split("//")[-1].split("/")[0] if WTI_URL else ""
 
 # ---------------------------------------------------------------------------
 # Holding register indices (1-based)
@@ -70,6 +79,26 @@ HR_WAN_FAULT_COUNT     = 73   # 24h average WAN latency in ms
 HR_WAN_LAST_FAULT_MINS = 74   # minutes since last WAN reconnection (9999=over 7 days)
 HR_HA_WS_STATUS        = 75   # 0=disconnected 1=connected
 HR_HA_EVENT_AGE        = 76   # seconds since last HA state_changed (65535=never)
+
+# ---------------------------------------------------------------------------
+# WTI NPS-8 register layout
+# ---------------------------------------------------------------------------
+# index 900: connection status  0=unavailable 1=ok
+# index 901-908: outlet A1-A8 status  0=off 1=on
+HR_WTI_STATUS      = 900
+HR_WTI_OUTLET_BASE = 901
+
+# Coil indices for WTI outlet control (momentary — auto-reset on trigger)
+# 10-17: turn outlets A1-A8 ON
+# 20-27: turn outlets A1-A8 OFF
+# 30-37: reboot outlets A1-A8
+COIL_WTI_ON_BASE     = 10
+COIL_WTI_OFF_BASE    = 20
+COIL_WTI_REBOOT_BASE = 30
+WTI_PLUG_COUNT       = 8
+
+_WTI_PLUG_STATUS_OID = "1.3.6.1.4.1.2634.3.100.200.1.3"
+_wti_snmp_engine     = SnmpEngine()
 
 # ---------------------------------------------------------------------------
 # Battery register layout  (flat list, sorted by pct ascending, offline first)
@@ -229,6 +258,7 @@ store   = ModbusSlaveContext(
 context = ModbusServerContext(slaves=store, single=True)
 
 _trigger_queue: asyncio.Queue = asyncio.Queue()
+_wti_queue:     asyncio.Queue = asyncio.Queue()
 
 
 def set_hr(index: int, value: float | None):
@@ -377,6 +407,21 @@ async def watch_coils():
                 log.info(f"[COIL {coil_index}] triggered → {script}")
                 reset_coil(coil_index)
                 await _trigger_queue.put(script)
+        if WTI_URL:
+            for i in range(WTI_PLUG_COUNT):
+                outlet = i + 1
+                if get_coil(COIL_WTI_ON_BASE + i):
+                    log.info(f"[COIL {COIL_WTI_ON_BASE + i}] WTI A{outlet} ON")
+                    reset_coil(COIL_WTI_ON_BASE + i)
+                    await _wti_queue.put((outlet, 1))
+                if get_coil(COIL_WTI_OFF_BASE + i):
+                    log.info(f"[COIL {COIL_WTI_OFF_BASE + i}] WTI A{outlet} OFF")
+                    reset_coil(COIL_WTI_OFF_BASE + i)
+                    await _wti_queue.put((outlet, 2))
+                if get_coil(COIL_WTI_REBOOT_BASE + i):
+                    log.info(f"[COIL {COIL_WTI_REBOOT_BASE + i}] WTI A{outlet} REBOOT")
+                    reset_coil(COIL_WTI_REBOOT_BASE + i)
+                    await _wti_queue.put((outlet, 3))
         await asyncio.sleep(0.2)
 
 
@@ -713,6 +758,69 @@ def _detect_dtype(name: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# WTI NPS-8 — SNMP status polling + HTTP CGI control
+# ---------------------------------------------------------------------------
+async def _poll_wti_status():
+    transport = await UdpTransportTarget.create((_WTI_HOST, 161), timeout=3, retries=1)
+    oids = [ObjectType(ObjectIdentity(f"{_WTI_PLUG_STATUS_OID}.{i}"))
+            for i in range(1, WTI_PLUG_COUNT + 1)]
+    errorIndication, errorStatus, _, varBinds = await get_cmd(
+        _wti_snmp_engine,
+        CommunityData("public", mpModel=1),
+        transport,
+        ContextData(),
+        *oids,
+    )
+    if errorIndication or errorStatus:
+        log.warning(f"[WTI] SNMP error: {errorIndication or errorStatus}")
+        set_hr_int(HR_WTI_STATUS, 0)
+        return
+    set_hr_int(HR_WTI_STATUS, 1)
+    states = []
+    for i, vb in enumerate(varBinds):
+        val = int(vb[1])
+        set_hr_int(HR_WTI_OUTLET_BASE + i, val)
+        states.append(f"A{i + 1}={'ON' if val else 'OFF'}")
+    log.info(f"[WTI] {' '.join(states)}")
+
+
+async def _wti_plug_action(session: aiohttp.ClientSession, outlet: int, action: int):
+    label = {1: "ON", 2: "OFF", 3: "REBOOT"}.get(action, str(action))
+    data = {f"u1plug{outlet}": str(action), "totaldelay": "1", "submit1": "Execute Actions"}
+    url = f"{WTI_URL}/cgi-bin/setparam"
+    async with session.post(url, data=data) as resp:
+        log.info(f"[WTI] plug A{outlet} → {label} (HTTP {resp.status})")
+
+
+async def wti_status_poller():
+    if not WTI_URL:
+        log.info("[WTI] WTI_URL not set — WTI disabled")
+        return
+    while True:
+        try:
+            await _poll_wti_status()
+        except Exception as e:
+            log.error(f"[WTI] SNMP poll error: {e}")
+            set_hr_int(HR_WTI_STATUS, 0)
+        await asyncio.sleep(30)
+
+
+async def wti_action_caller():
+    if not WTI_URL or not WTI_USER or not WTI_PASS:
+        return
+    auth = aiohttp.BasicAuth(WTI_USER, WTI_PASS)
+    async with aiohttp.ClientSession(auth=auth) as session:
+        while True:
+            outlet, action = await _wti_queue.get()
+            try:
+                await _wti_plug_action(session, outlet, action)
+                await asyncio.sleep(1)
+                await _poll_wti_status()
+            except Exception as e:
+                log.error(f"[WTI] action error: {e}")
+
+
+# ---------------------------------------------------------------------------
 # HA connection state  (written by ha_websocket, read by status_updater)
 # ---------------------------------------------------------------------------
 _ha_ws_connected:    bool            = False
@@ -964,6 +1072,8 @@ async def run():
             tg.create_task(yr_poller())
             tg.create_task(unifi_poller())
             tg.create_task(status_updater())
+            tg.create_task(wti_status_poller())
+            tg.create_task(wti_action_caller())
 
 
 if __name__ == "__main__":
