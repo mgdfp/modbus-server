@@ -879,7 +879,7 @@ async def _poll_unifi(session: aiohttp.ClientSession):
                 set_hr_int(HR_WAN_STATUS, code)
                 log.info(f"[UNIFI] WAN status={s} → {code}")
 
-    async with session.get(f"{base}/stat/event?within=24") as resp:
+    async with session.get(f"{base}/stat/event?_limit=1000") as resp:
         if resp.status != 200:
             log.warning(f"[UNIFI] events HTTP {resp.status}")
             return
