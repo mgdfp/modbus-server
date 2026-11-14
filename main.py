@@ -492,6 +492,7 @@ def _setup_battery_tracking(labels: list, entities: list, devices: list,
             entity_labels[eid] = ent["labels"]
 
     entity_reg = {ent["entity_id"]: ent for ent in entities if "entity_id" in ent}
+    states     = [s for s in states if s.get("entity_id")]
     state_map  = {s["entity_id"]: s for s in states}
 
     for state in states:
@@ -682,6 +683,7 @@ def _setup_temp_tracking(labels: list, entities: list, devices: list,
             if dev_id and dev_id in device_area:
                 entity_area[eid] = device_area[dev_id]
 
+    states = [s for s in states if s.get("entity_id")]
     state_map = {s["entity_id"]: s for s in states}
 
     for ent in entities:
@@ -942,9 +944,14 @@ async def ha_websocket(session: aiohttp.ClientSession):
 
                         if event_type == "state_changed":
                             eid = ed.get("entity_id", "")
-                            new_state = ed.get("new_state") or {}
-                            _state_map[eid] = new_state
                             _ha_last_event_time = datetime.now(timezone.utc)
+                            if not ed.get("new_state"):
+                                # Entity removed — drop it rather than caching an empty
+                                # state, which would break the next registry setup.
+                                _state_map.pop(eid, None)
+                                continue
+                            new_state = ed["new_state"]
+                            _state_map[eid] = new_state
                             if eid in _batt_entities:
                                 _update_battery_state(eid, new_state)
                             if eid in _temp_entities:
