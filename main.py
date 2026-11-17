@@ -846,21 +846,42 @@ _ha_last_event_time: datetime | None = None
 # ---------------------------------------------------------------------------
 # HA WebSocket
 # ---------------------------------------------------------------------------
+WS_RETRY_SECS      = 10
+WS_AUTH_RETRY_SECS = 300   # a rejected token won't fix itself; don't hammer HA
+
+
+class HAAuthError(Exception):
+    pass
+
+
+async def _ha_authenticate(ws: aiohttp.ClientWebSocketResponse):
+    """Run HA's auth handshake: auth_required → auth → auth_ok / auth_invalid."""
+    msg = await ws.receive_json(timeout=10)
+    if msg.get("type") != "auth_required":
+        raise RuntimeError(f"unexpected first message from HA: {msg.get('type')}")
+    await ws.send_json({"type": "auth", "access_token": HA_TOKEN})
+    msg = await ws.receive_json(timeout=10)
+    if msg.get("type") == "auth_invalid":
+        raise HAAuthError(msg.get("message", "auth_invalid"))
+    if msg.get("type") != "auth_ok":
+        raise RuntimeError(f"unexpected auth reply from HA: {msg.get('type')}")
+
+
 async def ha_websocket(session: aiohttp.ClientSession):
     global _ha_ws_connected, _ha_last_event_time
     ws_url = HA_URL.replace("http", "ws") + "/api/websocket"
     msg_id = 1
 
     while True:
+        delay = WS_RETRY_SECS
         try:
             # heartbeat: ping every 30 s and drop the connection if HA stops
             # answering, so a silently dead peer (power cut, VM reset) can't
             # leave us "connected" to nothing forever.
             async with session.ws_connect(ws_url, heartbeat=30) as ws:
+                await _ha_authenticate(ws)
                 _ha_ws_connected = True
                 log.info("[WS] connected to Home Assistant")
-
-                await ws.send_json({"type": "auth", "access_token": HA_TOKEN})
 
                 await ws.send_json({"id": msg_id, "type": "subscribe_events",
                                     "event_type": "state_changed"})
@@ -981,22 +1002,34 @@ async def ha_websocket(session: aiohttp.ClientSession):
                             reinit_task = asyncio.create_task(_do_reinit())
                             log.info(f"[WS] {event_type} — reinit scheduled")
 
-                async for msg in ws:
-                    if msg.type != aiohttp.WSMsgType.TEXT:
-                        continue
-                    # A message we can't handle must not drop the connection:
-                    # reconnecting re-fetches the same data and fails again,
-                    # looping forever (seen Nov 13-14: 9,592 reconnects).
-                    try:
-                        _handle_message(json.loads(msg.data))
-                    except Exception:
-                        log.exception("[WS] failed to handle message — skipped")
+                try:
+                    async for msg in ws:
+                        if msg.type != aiohttp.WSMsgType.TEXT:
+                            continue
+                        # A message we can't handle must not drop the connection:
+                        # reconnecting re-fetches the same data and fails again,
+                        # looping forever (seen Nov 13-14: 9,592 reconnects).
+                        try:
+                            _handle_message(json.loads(msg.data))
+                        except Exception:
+                            log.exception("[WS] failed to handle message — skipped")
+                finally:
+                    # Don't let a pending re-fetch fire on the dead socket.
+                    if reinit_task and not reinit_task.done():
+                        reinit_task.cancel()
 
-            _ha_ws_connected = False
+            log.warning(f"[WS] connection closed (code={ws.close_code}, "
+                        f"{ws.exception() or 'no error'}) — reconnecting in {delay}s")
+        except HAAuthError as e:
+            delay = WS_AUTH_RETRY_SECS
+            log.error(f"[WS] Home Assistant rejected the token ({e}) — check HA_TOKEN; "
+                      f"retrying in {delay}s")
         except Exception as e:
-            _ha_ws_connected = False
-            log.error(f"[WS] error: {e} — reconnecting in 10s")
-            await asyncio.sleep(10)
+            log.error(f"[WS] error: {e} — reconnecting in {delay}s")
+        # Always pause before reconnecting, including after a clean close, so
+        # a connection that keeps getting closed can't become a tight loop.
+        _ha_ws_connected = False
+        await asyncio.sleep(delay)
 
 
 # ---------------------------------------------------------------------------
