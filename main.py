@@ -853,7 +853,10 @@ async def ha_websocket(session: aiohttp.ClientSession):
 
     while True:
         try:
-            async with session.ws_connect(ws_url) as ws:
+            # heartbeat: ping every 30 s and drop the connection if HA stops
+            # answering, so a silently dead peer (power cut, VM reset) can't
+            # leave us "connected" to nothing forever.
+            async with session.ws_connect(ws_url, heartbeat=30) as ws:
                 _ha_ws_connected = True
                 log.info("[WS] connected to Home Assistant")
 
