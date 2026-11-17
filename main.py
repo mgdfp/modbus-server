@@ -917,10 +917,9 @@ async def ha_websocket(session: aiohttp.ClientSession):
                         msg_id += 1
                     log.info("[WS] registry changed — re-fetching registry data")
 
-                async for msg in ws:
-                    if msg.type != aiohttp.WSMsgType.TEXT:
-                        continue
-                    data = json.loads(msg.data)
+                def _handle_message(data: dict):
+                    global _ha_last_event_time
+                    nonlocal batt_initialized, temp_initialized, reinit_task
 
                     if data.get("type") == "result":
                         rid = data.get("id")
@@ -967,7 +966,7 @@ async def ha_websocket(session: aiohttp.ClientSession):
                                 # Entity removed — drop it rather than caching an empty
                                 # state, which would break the next registry setup.
                                 _state_map.pop(eid, None)
-                                continue
+                                return
                             new_state = ed["new_state"]
                             _state_map[eid] = new_state
                             if eid in _batt_entities:
@@ -981,6 +980,17 @@ async def ha_websocket(session: aiohttp.ClientSession):
                                 reinit_task.cancel()
                             reinit_task = asyncio.create_task(_do_reinit())
                             log.info(f"[WS] {event_type} — reinit scheduled")
+
+                async for msg in ws:
+                    if msg.type != aiohttp.WSMsgType.TEXT:
+                        continue
+                    # A message we can't handle must not drop the connection:
+                    # reconnecting re-fetches the same data and fails again,
+                    # looping forever (seen Nov 13-14: 9,592 reconnects).
+                    try:
+                        _handle_message(json.loads(msg.data))
+                    except Exception:
+                        log.exception("[WS] failed to handle message — skipped")
 
             _ha_ws_connected = False
         except Exception as e:
