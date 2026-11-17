@@ -260,6 +260,36 @@ store   = ModbusSlaveContext(
 )
 context = ModbusServerContext(slaves=store, single=True)
 
+
+def _check_register_layout():
+    """Fail at startup if register blocks overlap or overflow the datastore.
+
+    The blocks sit close together (e.g. battery slots end at 584, the dtype
+    block starts at 600), so bumping a slot count would otherwise silently
+    overwrite a neighbouring block and show garbage on the touchscreen.
+    """
+    hr_size = len(_hr_block.values)
+    blocks = sorted([
+        ("forecast/status",  HR_HOUR,          HR_HA_EVENT_AGE + 1),
+        ("battery summary",  BATT_BASE,        BATT_BASE + 4),
+        ("battery slots",    BATT_SLOT_BASE,   BATT_SLOT_BASE + BATT_SLOTS * BATT_SLOT_REGS),
+        ("battery dtypes",   BATT_DTYPE_BASE,  BATT_DTYPE_BASE + BATT_SLOTS),
+        ("temp summary",     TEMP_BASE,        TEMP_BASE + 2),
+        ("temp slots",       TEMP_SLOT_BASE,   TEMP_SLOT_BASE + TEMP_SLOTS * TEMP_SLOT_REGS),
+        ("temp icons",       TEMP_ICON_BASE,   TEMP_ICON_BASE + TEMP_SLOTS),
+        ("WTI",              HR_WTI_STATUS,    HR_WTI_OUTLET_BASE + WTI_PLUG_COUNT),
+    ], key=lambda b: b[1])
+    for (n1, _, end1), (n2, start2, _) in zip(blocks, blocks[1:]):
+        if end1 > start2:
+            raise RuntimeError(f"register layout: '{n1}' (ends {end1}) overlaps '{n2}' (starts {start2})")
+    if blocks[-1][2] > hr_size:
+        raise RuntimeError(f"register layout: '{blocks[-1][0]}' exceeds holding-register block ({hr_size})")
+    if COIL_WTI_REBOOT_BASE + WTI_PLUG_COUNT > len(_coil_block.values):
+        raise RuntimeError("register layout: WTI coils exceed coil block")
+
+
+_check_register_layout()
+
 _trigger_queue: asyncio.Queue = asyncio.Queue()
 _wti_queue:     asyncio.Queue = asyncio.Queue()
 
