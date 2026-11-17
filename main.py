@@ -261,16 +261,30 @@ _trigger_queue: asyncio.Queue = asyncio.Queue()
 _wti_queue:     asyncio.Queue = asyncio.Queue()
 
 
+def _to_u16(index: int, value: int) -> int:
+    """Encode an int as a 16-bit register value (negatives as two's complement).
+
+    pymodbus packs registers as unsigned 16-bit; a negative or >65535 value in
+    the datastore makes it silently drop the whole read response, which the
+    touchscreen shows as comm errors on every signal.
+    """
+    if not -32768 <= value <= 65535:
+        clamped = max(-32768, min(65535, value))
+        log.warning(f"[HR {index}] value {value} out of 16-bit range, clamped to {clamped}")
+        value = clamped
+    return value & 0xFFFF
+
+
 def set_hr(index: int, value: float | None):
     if value is None:
         return
     raw = int(round(value * 10))
-    _hr_block.setValues(index, [raw])
+    _hr_block.setValues(index, [_to_u16(index, raw)])
     log.debug(f"[HR {index}] = {raw} ({value})")
 
 
 def set_hr_int(index: int, value: int):
-    _hr_block.setValues(index, [value])
+    _hr_block.setValues(index, [_to_u16(index, value)])
     log.debug(f"[HR {index}] = {value}")
 
 
@@ -375,7 +389,8 @@ def _process_yr(data: dict):
         parts = []
         for slot_i2, (sc_r2, st_r2, sp_r2) in enumerate(slot_regs2):
             code2 = _hr_block.getValues(sc_r2, 1)[0]
-            temp2 = _hr_block.getValues(st_r2, 1)[0] / 10.0
+            raw_t = _hr_block.getValues(st_r2, 1)[0]
+            temp2 = (raw_t - 0x10000 if raw_t >= 0x8000 else raw_t) / 10.0
             prcp2 = _hr_block.getValues(sp_r2, 1)[0] / 10.0
             name2 = _CODE_NAMES.get(code2, str(code2))
             parts.append(f"S{slot_i2}={name2}/{temp2:.1f}°C/{prcp2:.1f}mm")
