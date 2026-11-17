@@ -32,7 +32,10 @@ HA_HEADERS = {"Authorization": f"Bearer {HA_TOKEN}", "Content-Type": "applicatio
 YR_LAT = os.environ["YR_LAT"]
 YR_LON = os.environ["YR_LON"]
 YR_URL = f"https://api.met.no/weatherapi/locationforecast/2.0/compact?lat={YR_LAT}&lon={YR_LON}"
-YR_HEADERS = {"User-Agent": "home-modbus-bridge/1.0"}
+# met.no terms require the User-Agent to identify the app and include contact
+# info (email or URL), or requests may be blocked. Kept in .env, not in the repo.
+YR_CONTACT = os.environ.get("YR_CONTACT", "").strip()
+YR_HEADERS = {"User-Agent": f"home-modbus-bridge/1.0 {YR_CONTACT}".strip()}
 DISPLAY_TZ = ZoneInfo("Europe/Oslo")
 
 UNIFI_URL     = os.environ.get("UNIFI_URL", "").rstrip("/")
@@ -399,6 +402,8 @@ def _process_yr(data: dict):
 
 
 async def yr_poller():
+    if not YR_CONTACT:
+        log.warning("[YR] YR_CONTACT not set — met.no may block requests without contact info")
     async with aiohttp.ClientSession(headers=YR_HEADERS) as session:
         while True:
             try:
