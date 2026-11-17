@@ -850,6 +850,11 @@ WS_RETRY_SECS      = 10
 WS_AUTH_RETRY_SECS = 300   # a rejected token won't fix itself; don't hammer HA
 
 
+# Registry changes that trigger a re-fetch + re-setup of battery/temp slots
+_REGISTRY_EVENTS = ("entity_registry_updated", "label_registry_updated",
+                    "device_registry_updated", "area_registry_updated")
+
+
 class HAAuthError(Exception):
     pass
 
@@ -889,9 +894,13 @@ async def ha_websocket(session: aiohttp.ClientSession):
                 await ws.send_json({"id": msg_id, "type": "subscribe_events",
                                     "event_type": "entity_registry_updated"})
                 msg_id += 1
-                await ws.send_json({"id": msg_id, "type": "subscribe_events",
-                                    "event_type": "label_registry_updated"})
-                msg_id += 1
+                # Device and area changes matter too: battery-type labels are read
+                # from devices, and slot room names come from the area registry.
+                for ev in ("label_registry_updated", "device_registry_updated",
+                           "area_registry_updated"):
+                    await ws.send_json({"id": msg_id, "type": "subscribe_events",
+                                        "event_type": ev})
+                    msg_id += 1
 
                 await ws.send_json({"id": msg_id, "type": "get_states"})
                 get_states_id = msg_id; msg_id += 1
@@ -995,8 +1004,7 @@ async def ha_websocket(session: aiohttp.ClientSession):
                             if eid in _temp_entities:
                                 _update_temp_state(eid, new_state)
 
-                        elif event_type in ("entity_registry_updated",
-                                            "label_registry_updated"):
+                        elif event_type in _REGISTRY_EVENTS:
                             if reinit_task and not reinit_task.done():
                                 reinit_task.cancel()
                             reinit_task = asyncio.create_task(_do_reinit())
