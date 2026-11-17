@@ -358,7 +358,32 @@ def _yr_code(symbol: str) -> int:
     return code
 
 
+# If no forecast has been fetched for this long, the registers would keep
+# showing the last one as if it were current (e.g. yesterday's weather in
+# today's column). Instead, show an obviously wrong temperature everywhere.
+YR_STALE_AFTER = timedelta(hours=6)
+YR_STALE_TEMP  = 9999            # shown as 999.9° on the touchscreen
+_yr_last_ok: datetime | None = None
+_yr_stale = False                # also read by clock_updater to dim today's slots
+
+
+def _check_yr_stale():
+    global _yr_stale
+    if _yr_stale:
+        return
+    age = None if _yr_last_ok is None else datetime.now(timezone.utc) - _yr_last_ok
+    if age is not None and age <= YR_STALE_AFTER:
+        return
+    _yr_stale = True
+    for slot_regs in _SLOT_REGS:
+        for _, st_r, _ in slot_regs:
+            set_hr_int(st_r, YR_STALE_TEMP)
+    since = "since startup" if age is None else f"for {age.total_seconds() / 3600:.1f} h"
+    log.warning(f"[YR] no forecast {since} — showing 999.9° and dimming forecast")
+
+
 def _process_yr(data: dict):
+    global _yr_last_ok, _yr_stale
     timeseries = data["properties"]["timeseries"]
 
     ts_map: dict[datetime, dict] = {}
@@ -430,6 +455,11 @@ def _process_yr(data: dict):
         log.info(f"[YR] D{day_i2+1}: {' '.join(parts)}")
     log.info(f"[YR] updated forecast for {today_local}")
 
+    if _yr_stale:
+        log.info("[YR] forecast available again — stale marker cleared")
+    _yr_last_ok = datetime.now(timezone.utc)
+    _yr_stale = False
+
 
 async def yr_poller():
     if not YR_CONTACT:
@@ -444,6 +474,7 @@ async def yr_poller():
                         log.warning(f"[YR] HTTP {resp.status}")
             except Exception as e:
                 log.error(f"[YR] {e}")
+            _check_yr_stale()
             await asyncio.sleep(1800)  # met.no asks for max 1 req / 30 min per location
 
 
@@ -1154,6 +1185,8 @@ async def clock_updater():
         s0 = 30 if slot > 0 else 100
         s1 = 30 if slot > 1 else 100
         s2 = 30 if slot > 2 else 100
+        if _yr_stale:
+            s0 = s1 = s2 = 30
         _hr_block.setValues(HR_SLOT0_OPACITY, [s0])
         _hr_block.setValues(HR_SLOT1_OPACITY, [s1])
         _hr_block.setValues(HR_SLOT2_OPACITY, [s2])
