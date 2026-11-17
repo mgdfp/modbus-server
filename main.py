@@ -961,6 +961,9 @@ async def ha_websocket(session: aiohttp.ClientSession):
                         result = data.get("result", [])
 
                         if rid == get_states_id:
+                            # Replace, don't merge: entities deleted while we were
+                            # disconnected must not linger as tracked slots.
+                            _state_map.clear()
                             for state in result:
                                 eid = state["entity_id"]
                                 _state_map[eid] = state
